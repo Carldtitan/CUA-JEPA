@@ -77,6 +77,14 @@ def deterministic_index(seed: int, app: str, candidate_index: int, length: int) 
     return int.from_bytes(digest[:8], "big") % length
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def add_bytes(tar: tarfile.TarFile, path: str, value: bytes) -> None:
     info = tarfile.TarInfo(path)
     info.size = len(value)
@@ -125,15 +133,10 @@ def finalize_shard(
         )
     os.replace(temporary_path, final_path)
 
-    digest = hashlib.sha256()
-    with final_path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    manifest["sha256"] = digest.hexdigest()
+    manifest["sha256"] = file_sha256(final_path)
     manifest["bytes"] = final_path.stat().st_size
     final_path.with_suffix(".json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     final_path.with_suffix(".sha256").write_text(
         f"{manifest['sha256']}  {final_path.name}\n", encoding="ascii"
     )
     return manifest
-

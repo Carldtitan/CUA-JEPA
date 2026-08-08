@@ -21,6 +21,7 @@ from cua_jepa.shards import (
     build_full_specs,
     build_pilot_specs,
     deterministic_index,
+    file_sha256,
     finalize_shard,
 )
 
@@ -57,9 +58,6 @@ if modal.is_local():
             "mcr.microsoft.com/playwright:v1.59.0-noble", add_python="3.12"
         )
         .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
-        .add_local_python_source("cua_jepa", copy=True)
-        .add_local_file(LOCAL_CONFIG_PATH, REMOTE_CONFIG_FILE, copy=True)
-        .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
     )
     for app_name in ALL_APPS:
         image = image.add_local_dir(
@@ -74,6 +72,11 @@ if modal.is_local():
             f"cd /opt/cua-jepa/apps/{app_name} && npm ci --no-audit --no-fund"
             for app_name in ALL_APPS
         ]
+    )
+    image = (
+        image.add_local_python_source("cua_jepa", copy=True)
+        .add_local_file(LOCAL_CONFIG_PATH, REMOTE_CONFIG_FILE, copy=True)
+        .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
     )
 else:
     image = modal.Image.debian_slim()
@@ -241,13 +244,28 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                 server.kill()
 
 
-def _download_volume_file(remote_path: str, local_path: Path) -> None:
+def _download_volume_file(
+    remote_path: str, local_path: Path, maximum_attempts: int = 6
+) -> None:
     temporary_path = local_path.with_suffix(local_path.suffix + ".partial")
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    with temporary_path.open("wb") as handle:
-        for chunk in volume.read_file(remote_path):
-            handle.write(chunk)
-    temporary_path.replace(local_path)
+    for attempt in range(1, maximum_attempts + 1):
+        try:
+            with temporary_path.open("wb") as handle:
+                for chunk in volume.read_file(remote_path):
+                    handle.write(chunk)
+            temporary_path.replace(local_path)
+            return
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            if attempt == maximum_attempts:
+                raise
+            delay = min(2 ** (attempt - 1), 30)
+            print(
+                f"Download failed for {remote_path}; retrying in {delay}s "
+                f"({attempt}/{maximum_attempts})"
+            )
+            time.sleep(delay)
 
 
 def _local_bytes(path: Path) -> int:
@@ -274,10 +292,19 @@ def _run_specs(
             remote_tar = result["volume_path"]
             relative = Path(remote_tar)
             local_tar = local_root / relative
-            for suffix in (".tar", ".json", ".sha256"):
+            for suffix in (".json", ".sha256"):
                 remote_file = str(relative.with_suffix(suffix)).replace("\\", "/")
                 local_file = local_tar.with_suffix(suffix)
                 _download_volume_file(remote_file, local_file)
+            if not local_tar.exists() or file_sha256(local_tar) != result["sha256"]:
+                _download_volume_file(remote_tar, local_tar)
+            actual_sha256 = file_sha256(local_tar)
+            if actual_sha256 != result["sha256"]:
+                local_tar.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Checksum mismatch for {relative}: "
+                    f"{actual_sha256} != {result['sha256']}"
+                )
             results.append(result)
 
             run_dir = local_root / run_id

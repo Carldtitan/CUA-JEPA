@@ -1,5 +1,10 @@
 from cua_jepa.config import load_config
-from cua_jepa.shards import build_full_specs, build_pilot_specs, deterministic_index
+from cua_jepa.shards import (
+    build_full_specs,
+    build_pilot_specs,
+    deterministic_index,
+    file_sha256,
+)
 
 
 def test_full_shards_cover_exact_target() -> None:
@@ -24,3 +29,10 @@ def test_catalog_selection_is_deterministic() -> None:
         42, "gmail_mock", 7, 13
     )
 
+
+def test_file_sha256(tmp_path) -> None:
+    artifact = tmp_path / "artifact.bin"
+    artifact.write_bytes(b"CUA-JEPA")
+    assert file_sha256(artifact) == (
+        "72d8746d2cb33f9d5e4bf79d3f789f52d4c1ecbdd008508ae8d2491bd8533034"
+    )
