@@ -11,7 +11,7 @@
   "pilot_bundles": 100,
   "maximum_local_bytes": 32212254720,
   "maximum_runtime_hours": 10,
-  "maximum_remote_workers": 12,
+  "maximum_remote_workers": 24,
   "splits": {
     "train": {
       "bundles": 8000,

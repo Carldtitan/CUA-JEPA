@@ -127,7 +127,7 @@ def _load_remote_catalog(app_name: str) -> list[dict[str, Any]]:
     volumes={REMOTE_DATA_ROOT: volume},
     cpu=1.0,
     memory=2048,
-    max_containers=12,
+    max_containers=24,
     timeout=20 * 60,
     retries=0,
 )
