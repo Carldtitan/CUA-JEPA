@@ -300,7 +300,10 @@ def _run_specs(
 ) -> list[dict]:
     remote_results: list[dict] = []
     errors: list[str] = []
-    batch_size = CONFIG.maximum_remote_workers
+    # Queue several worker-waves at once. Modal still enforces max_containers,
+    # but a larger window lets a new shard start as soon as any worker finishes
+    # instead of waiting for the slowest shard in each fixed-size wave.
+    batch_size = CONFIG.maximum_remote_workers * 4
     for offset in range(0, len(specs), batch_size):
         if time.monotonic() >= deadline:
             raise TimeoutError("Ten-hour generation limit reached")
