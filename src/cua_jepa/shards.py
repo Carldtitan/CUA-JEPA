@@ -94,6 +94,11 @@ def add_bytes(tar: tarfile.TarFile, path: str, value: bytes) -> None:
 
 
 def add_bundle(tar: tarfile.TarFile, artifact: BundleArtifact) -> dict[str, Any]:
+    if hashlib.sha256(artifact.current_webp).hexdigest() != artifact.current_sha256:
+        raise ValueError(f"Current screenshot checksum mismatch: {artifact.bundle_id}")
+    for branch in artifact.branches:
+        if hashlib.sha256(branch.after_webp).hexdigest() != branch.after_sha256:
+            raise ValueError(f"Future screenshot checksum mismatch: {artifact.bundle_id}")
     prefix = artifact.bundle_id
     add_bytes(tar, f"{prefix}/current.webp", artifact.current_webp)
     for index, branch in enumerate(artifact.branches):

@@ -35,10 +35,11 @@ STABILITY_CSS = """
 class BranchArtifact:
     action: dict[str, Any]
     element_hint: str | None
-    branch_start_sha256: str
+    branch_start_render_sha256: str
     branch_start_changed_pixel_fraction: float
     after_webp: bytes
     after_sha256: str
+    after_render_sha256: str
     changed_pixel_fraction: float
     state_diff_paths: tuple[str, ...]
     state_diff_bytes: int
@@ -53,12 +54,13 @@ class BundleArtifact:
     source_task_id: str
     current_webp: bytes
     current_sha256: str
+    current_render_sha256: str
     warmup_actions: tuple[dict[str, Any], ...]
     branches: tuple[BranchArtifact, ...]
 
     def metadata(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "bundle_id": self.bundle_id,
             "app": self.app,
             "split": self.split,
@@ -67,6 +69,7 @@ class BundleArtifact:
             "current_file": "current.webp",
             "current_sha256": self.current_sha256,
             "warmup_actions": list(self.warmup_actions),
+            "qa": {"current_render_sha256": self.current_render_sha256},
             "branches": [
                 {
                     "branch_index": index,
@@ -76,10 +79,13 @@ class BundleArtifact:
                     "changed_pixel_fraction": branch.changed_pixel_fraction,
                     "qa": {
                         "element_hint": branch.element_hint,
-                        "branch_start_sha256": branch.branch_start_sha256,
+                        "branch_start_render_sha256": (
+                            branch.branch_start_render_sha256
+                        ),
                         "branch_start_changed_pixel_fraction": (
                             branch.branch_start_changed_pixel_fraction
                         ),
+                        "after_render_sha256": branch.after_render_sha256,
                         "state_diff_paths": list(branch.state_diff_paths),
                         "state_diff_bytes": branch.state_diff_bytes,
                     },
@@ -249,7 +255,7 @@ class BundleCollector:
             current_metrics = image_metrics(current_png)
             if not is_usable_screen(current_metrics):
                 raise BundleRejected(
-                    "base_screen_unusable:"
+                    "base_screen_unusable",
                     f"{current_metrics.width}x{current_metrics.height}:"
                     f"luminance_stddev={current_metrics.luminance_stddev:.3f}"
                 )
@@ -285,7 +291,7 @@ class BundleCollector:
                 after_metrics = image_metrics(after_png)
                 if not is_usable_screen(after_metrics):
                     raise BundleRejected(
-                        "after_screen_unusable:"
+                        "after_screen_unusable",
                         f"{after_metrics.width}x{after_metrics.height}:"
                         f"luminance_stddev={after_metrics.luminance_stddev:.3f}"
                     )
@@ -294,14 +300,16 @@ class BundleCollector:
                 if changed < self.minimum_changed_fraction and not state_diff:
                     raise BundleRejected("action_had_no_observable_effect")
 
+                after_webp = png_to_lossless_webp(after_png)
                 branch_artifacts.append(
                     BranchArtifact(
                         action=action.as_dict(self.viewport_width, self.viewport_height),
                         element_hint=action.element_hint,
-                        branch_start_sha256=branch_start_hash,
+                        branch_start_render_sha256=branch_start_hash,
                         branch_start_changed_pixel_fraction=round(difference, 8),
-                        after_webp=png_to_lossless_webp(after_png),
-                        after_sha256=after_metrics.sha256,
+                        after_webp=after_webp,
+                        after_sha256=hashlib.sha256(after_webp).hexdigest(),
+                        after_render_sha256=after_metrics.sha256,
                         changed_pixel_fraction=round(changed, 8),
                         state_diff_paths=tuple(sorted(state_diff.keys())),
                         state_diff_bytes=len(
@@ -316,14 +324,16 @@ class BundleCollector:
         if len(after_hashes) != self.actions_per_bundle:
             raise BundleRejected("duplicate_branch_futures")
 
+        current_webp = png_to_lossless_webp(current_png)
         return BundleArtifact(
             bundle_id=bundle_id,
             app=self.app,
             split=self.split,
             seed=seed,
             source_task_id=source_task_id,
-            current_webp=png_to_lossless_webp(current_png),
-            current_sha256=current_metrics.sha256,
+            current_webp=current_webp,
+            current_sha256=hashlib.sha256(current_webp).hexdigest(),
+            current_render_sha256=current_metrics.sha256,
             warmup_actions=tuple(
                 action.as_dict(self.viewport_width, self.viewport_height) for action in warmups
             ),
@@ -340,4 +350,6 @@ def with_attempts(
             return operation(attempt), failures
         except BundleRejected as exc:
             failures.append(str(exc))
-    raise BundleRejected(json.dumps({"attempt_failures": failures}))
+    raise BundleRejected(
+        "maximum_attempts_exhausted", json.dumps({"attempt_failures": failures})
+    )
