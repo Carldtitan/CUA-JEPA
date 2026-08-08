@@ -1,0 +1,38 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Downloaded upstream sources and caches
+.vendor/
+.cache/
+node_modules/
+
+# Generated data and run artifacts
+data/synthetic/
+data/pilot/
+artifacts/
+logs/
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Models and checkpoints
+checkpoints/
+outputs/
+*.safetensors
+*.ckpt
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
