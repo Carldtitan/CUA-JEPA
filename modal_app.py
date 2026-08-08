@@ -53,6 +53,7 @@ image = (
     modal.Image.from_registry(
         "mcr.microsoft.com/playwright/python:v1.59.0-noble", add_python="3.12"
     )
+    .apt_install("nodejs", "npm")
     .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
     .add_local_python_source("cua_jepa", copy=True)
     .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
