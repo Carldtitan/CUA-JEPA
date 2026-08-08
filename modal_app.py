@@ -190,6 +190,9 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                     viewport_width=CONFIG.viewport.width,
                     viewport_height=CONFIG.viewport.height,
                     actions_per_bundle=CONFIG.actions_per_bundle,
+                    maximum_action_candidates=(
+                        CONFIG.quality.maximum_action_candidates_per_bundle
+                    ),
                     maximum_reset_changed_fraction=(
                         CONFIG.quality.maximum_reset_changed_pixel_fraction
                     ),

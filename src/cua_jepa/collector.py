@@ -4,6 +4,7 @@ import hashlib
 import json
 import random
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -56,6 +57,7 @@ class BundleArtifact:
     current_sha256: str
     current_render_sha256: str
     warmup_actions: tuple[dict[str, Any], ...]
+    action_candidate_failures: dict[str, int]
     branches: tuple[BranchArtifact, ...]
 
     def metadata(self) -> dict[str, Any]:
@@ -69,7 +71,10 @@ class BundleArtifact:
             "current_file": "current.webp",
             "current_sha256": self.current_sha256,
             "warmup_actions": list(self.warmup_actions),
-            "qa": {"current_render_sha256": self.current_render_sha256},
+            "qa": {
+                "current_render_sha256": self.current_render_sha256,
+                "action_candidate_failures": self.action_candidate_failures,
+            },
             "branches": [
                 {
                     "branch_index": index,
@@ -113,6 +118,7 @@ class BundleCollector:
         viewport_width: int,
         viewport_height: int,
         actions_per_bundle: int = 4,
+        maximum_action_candidates: int = 12,
         maximum_reset_changed_fraction: float = 0.000025,
         minimum_changed_fraction: float = 0.0001,
         request_timeout_seconds: int = 15,
@@ -124,6 +130,7 @@ class BundleCollector:
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         self.actions_per_bundle = actions_per_bundle
+        self.maximum_action_candidates = maximum_action_candidates
         self.maximum_reset_changed_fraction = maximum_reset_changed_fraction
         self.minimum_changed_fraction = minimum_changed_fraction
         self.request_timeout_seconds = request_timeout_seconds
@@ -237,6 +244,15 @@ class BundleCollector:
             action = clicks[rng.randrange(len(clicks))]
             execute_action(page, action)
             page.wait_for_timeout(350)
+            destination_metrics = image_metrics(self._settle(page))
+            destination_actions = enumerate_actions(page, seed + index + 10_000)
+            if (
+                not is_usable_screen(destination_metrics)
+                or len(destination_actions) < self.actions_per_bundle
+            ):
+                page.go_back(wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(350)
+                break
             warmups.append(action)
         return warmups
 
@@ -261,8 +277,10 @@ class BundleCollector:
                 )
 
             candidates = enumerate_actions(base_page, seed + 1009, bundle_id[-8:])
-            selected = choose_distinct_actions(candidates, self.actions_per_bundle, seed + 2017)
-            if len(selected) != self.actions_per_bundle:
+            selected = choose_distinct_actions(
+                candidates, self.maximum_action_candidates, seed + 2017
+            )
+            if len(selected) < self.actions_per_bundle:
                 raise BundleRejected("insufficient_actions")
             branch_initial_state = self._current_state(base_sid)
             branch_start_url = base_page.url
@@ -270,8 +288,10 @@ class BundleCollector:
             base_context.close()
 
         branch_artifacts: list[BranchArtifact] = []
-        for branch_index, action in enumerate(selected):
-            sid = f"branch-{branch_index}-{uuid.uuid4()}"
+        action_candidate_failures: Counter[str] = Counter()
+        after_hashes: set[str] = set()
+        for candidate_index, action in enumerate(selected):
+            sid = f"branch-{candidate_index}-{uuid.uuid4()}"
             context, page = self._new_page(
                 sid, branch_initial_state, start_url=branch_start_url
             )
@@ -290,17 +310,20 @@ class BundleCollector:
                 after_png = self._settle(page)
                 after_metrics = image_metrics(after_png)
                 if not is_usable_screen(after_metrics):
-                    raise BundleRejected(
-                        "after_screen_unusable",
-                        f"{after_metrics.width}x{after_metrics.height}:"
-                        f"luminance_stddev={after_metrics.luminance_stddev:.3f}"
-                    )
+                    action_candidate_failures["after_screen_unusable"] += 1
+                    continue
                 changed = changed_pixel_fraction(current_png, after_png)
                 state_diff = self._state_diff(sid)
                 if changed < self.minimum_changed_fraction and not state_diff:
-                    raise BundleRejected("action_had_no_observable_effect")
+                    action_candidate_failures["action_had_no_observable_effect"] += 1
+                    continue
 
                 after_webp = png_to_lossless_webp(after_png)
+                after_sha256 = hashlib.sha256(after_webp).hexdigest()
+                if after_sha256 in after_hashes:
+                    action_candidate_failures["duplicate_branch_future"] += 1
+                    continue
+                after_hashes.add(after_sha256)
                 branch_artifacts.append(
                     BranchArtifact(
                         action=action.as_dict(self.viewport_width, self.viewport_height),
@@ -308,7 +331,7 @@ class BundleCollector:
                         branch_start_render_sha256=branch_start_hash,
                         branch_start_changed_pixel_fraction=round(difference, 8),
                         after_webp=after_webp,
-                        after_sha256=hashlib.sha256(after_webp).hexdigest(),
+                        after_sha256=after_sha256,
                         after_render_sha256=after_metrics.sha256,
                         changed_pixel_fraction=round(changed, 8),
                         state_diff_paths=tuple(sorted(state_diff.keys())),
@@ -317,12 +340,16 @@ class BundleCollector:
                         ),
                     )
                 )
+                if len(branch_artifacts) == self.actions_per_bundle:
+                    break
             finally:
                 context.close()
 
-        after_hashes = {branch.after_sha256 for branch in branch_artifacts}
-        if len(after_hashes) != self.actions_per_bundle:
-            raise BundleRejected("duplicate_branch_futures")
+        if len(branch_artifacts) != self.actions_per_bundle:
+            raise BundleRejected(
+                "insufficient_effective_actions",
+                json.dumps(dict(action_candidate_failures), sort_keys=True),
+            )
 
         current_webp = png_to_lossless_webp(current_png)
         return BundleArtifact(
@@ -337,6 +364,7 @@ class BundleCollector:
             warmup_actions=tuple(
                 action.as_dict(self.viewport_width, self.viewport_height) for action in warmups
             ),
+            action_candidate_failures=dict(action_candidate_failures),
             branches=tuple(branch_artifacts),
         )
 

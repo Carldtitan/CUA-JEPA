@@ -36,6 +36,9 @@ def main() -> None:
             viewport_width=config.viewport.width,
             viewport_height=config.viewport.height,
             actions_per_bundle=config.actions_per_bundle,
+            maximum_action_candidates=(
+                config.quality.maximum_action_candidates_per_bundle
+            ),
             maximum_reset_changed_fraction=(
                 config.quality.maximum_reset_changed_pixel_fraction
             ),

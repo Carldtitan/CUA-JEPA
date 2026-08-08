@@ -8,6 +8,7 @@ def test_dataset_target_is_36k_transitions() -> None:
     assert config.total_bundles == 9_000
     assert config.total_transitions == 36_000
     assert config.actions_per_bundle == 4
+    assert config.quality.maximum_action_candidates_per_bundle >= config.actions_per_bundle
     assert (
         config.quality.maximum_reset_changed_pixel_fraction
         * config.viewport.width

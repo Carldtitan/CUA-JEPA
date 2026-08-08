@@ -17,6 +17,7 @@ class Viewport:
 class QualityConfig:
     minimum_bundle_acceptance_rate: float
     minimum_identical_reset_rate: float
+    maximum_action_candidates_per_bundle: int
     maximum_reset_changed_pixel_fraction: float
     minimum_changed_pixel_fraction: float
     maximum_changed_pixel_fraction: float
