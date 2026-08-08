@@ -51,9 +51,8 @@ _require_local_inputs()
 
 image = (
     modal.Image.from_registry(
-        "mcr.microsoft.com/playwright/python:v1.59.0-noble", add_python="3.12"
+        "mcr.microsoft.com/playwright:v1.59.0-noble", add_python="3.12"
     )
-    .apt_install("nodejs", "npm")
     .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
     .add_local_python_source("cua_jepa", copy=True)
     .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
@@ -109,7 +108,6 @@ def _load_remote_catalog(app_name: str) -> list[dict[str, Any]]:
     volumes={REMOTE_DATA_ROOT: volume},
     cpu=1.0,
     memory=2048,
-    ephemeral_disk=2048,
     max_containers=12,
     timeout=20 * 60,
     retries=0,
