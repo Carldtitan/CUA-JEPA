@@ -210,7 +210,11 @@ class BundleCollector:
             current_png = self._settle(base_page)
             current_metrics = image_metrics(current_png)
             if not is_usable_screen(current_metrics):
-                raise BundleRejected("base_screen_unusable")
+                raise BundleRejected(
+                    "base_screen_unusable:"
+                    f"{current_metrics.width}x{current_metrics.height}:"
+                    f"luminance_stddev={current_metrics.luminance_stddev:.3f}"
+                )
 
             candidates = enumerate_actions(base_page, seed + 1009, bundle_id[-8:])
             selected = choose_distinct_actions(candidates, self.actions_per_bundle, seed + 2017)
@@ -237,7 +241,11 @@ class BundleCollector:
                 after_png = self._settle(page)
                 after_metrics = image_metrics(after_png)
                 if not is_usable_screen(after_metrics):
-                    raise BundleRejected("after_screen_unusable")
+                    raise BundleRejected(
+                        "after_screen_unusable:"
+                        f"{after_metrics.width}x{after_metrics.height}:"
+                        f"luminance_stddev={after_metrics.luminance_stddev:.3f}"
+                    )
                 changed = changed_pixel_fraction(current_png, after_png)
                 state_diff = self._state_diff(sid)
                 if changed < self.minimum_changed_fraction and not state_diff:

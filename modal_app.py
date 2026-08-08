@@ -212,7 +212,8 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
 
             if len(metadata) != spec.bundle_count:
                 raise RuntimeError(
-                    f"Shard accepted {len(metadata)}/{spec.bundle_count} bundles; "
+                    f"{spec.phase}/{spec.app}/shard-{spec.shard_index:04d}: "
+                    f"accepted {len(metadata)}/{spec.bundle_count} bundles; "
                     f"failures={dict(failures)}"
                 )
 
@@ -257,6 +258,7 @@ def _run_specs(
     specs: list[ShardSpec], run_id: str, local_root: Path, deadline: float
 ) -> list[dict]:
     results: list[dict] = []
+    errors: list[str] = []
     batch_size = CONFIG.maximum_remote_workers
     for offset in range(0, len(specs), batch_size):
         if time.monotonic() >= deadline:
@@ -267,7 +269,8 @@ def _run_specs(
             jobs, order_outputs=False, return_exceptions=True
         ):
             if isinstance(result, BaseException):
-                raise result
+                errors.append(repr(result))
+                continue
             remote_tar = result["volume_path"]
             relative = Path(remote_tar)
             local_tar = local_root / relative
@@ -298,6 +301,21 @@ def _run_specs(
             print(
                 f"[{len(results)}/{len(specs)}] {relative.name}: "
                 f"{report['accepted_bundles']} bundles, {used / 2**30:.2f} GiB local"
+            )
+        if errors:
+            run_dir = local_root / run_id
+            error_report = {
+                "run_id": run_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "failed_shards": len(errors),
+                "errors": errors,
+            }
+            error_path = run_dir / "errors.json"
+            error_path.parent.mkdir(parents=True, exist_ok=True)
+            error_path.write_text(json.dumps(error_report, indent=2), encoding="utf-8")
+            raise RuntimeError(
+                f"{len(errors)} shard(s) failed; see {error_path}: "
+                + " | ".join(errors)
             )
     return results
 
