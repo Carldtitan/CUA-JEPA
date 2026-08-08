@@ -121,6 +121,12 @@ def finalize_shard(
     attempts: int,
 ) -> dict[str, Any]:
     records = list(metadata)
+    branches = [branch for record in records for branch in record["branches"]]
+    action_kinds = Counter(branch["action"]["kind"] for branch in branches)
+    changed_fractions = [branch["changed_pixel_fraction"] for branch in branches]
+    reset_fractions = [
+        branch["qa"]["branch_start_changed_pixel_fraction"] for branch in branches
+    ]
     manifest = {
         "schema_version": 1,
         "spec": asdict(spec),
@@ -129,6 +135,22 @@ def finalize_shard(
         "attempts": attempts,
         "failures": dict(failures),
         "bundle_ids": [record["bundle_id"] for record in records],
+        "action_kinds": dict(action_kinds),
+        "quality": {
+            "minimum_changed_pixel_fraction": min(changed_fractions),
+            "maximum_changed_pixel_fraction": max(changed_fractions),
+            "maximum_reset_changed_pixel_fraction": max(reset_fractions),
+            "duplicate_action_bundles": sum(
+                len(
+                    {
+                        json.dumps(branch["action"], sort_keys=True)
+                        for branch in record["branches"]
+                    }
+                )
+                != len(record["branches"])
+                for record in records
+            ),
+        },
     }
     with tarfile.open(temporary_path, mode="a") as tar:
         add_bytes(

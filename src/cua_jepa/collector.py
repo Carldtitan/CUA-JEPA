@@ -123,6 +123,7 @@ class BundleCollector:
         maximum_reset_changed_fraction: float = 0.00005,
         allow_warmups: bool = True,
         minimum_changed_fraction: float = 0.0001,
+        maximum_changed_fraction: float = 0.95,
         request_timeout_seconds: int = 15,
     ) -> None:
         self.browser = browser
@@ -137,6 +138,7 @@ class BundleCollector:
         self.maximum_reset_changed_fraction = maximum_reset_changed_fraction
         self.allow_warmups = allow_warmups
         self.minimum_changed_fraction = minimum_changed_fraction
+        self.maximum_changed_fraction = maximum_changed_fraction
         self.request_timeout_seconds = request_timeout_seconds
         self.http = requests.Session()
 
@@ -200,7 +202,11 @@ class BundleCollector:
             route.abort()
 
     def _new_page(
-        self, sid: str, state: dict[str, Any], start_url: str | None = None
+        self,
+        sid: str,
+        state: dict[str, Any],
+        start_url: str | None = None,
+        render_seed: int = 0,
     ) -> tuple[BrowserContext, Page]:
         self._inject_state(sid, state)
         context = self.browser.new_context(
@@ -211,7 +217,19 @@ class BundleCollector:
             reduced_motion="reduce",
         )
         context.route("**/*", self._route)
+        context.add_init_script(
+            script=f"""
+                (() => {{
+                    let value = {render_seed & 0xFFFFFFFF};
+                    Math.random = () => {{
+                        value = (1664525 * value + 1013904223) >>> 0;
+                        return value / 4294967296;
+                    }};
+                }})();
+            """
+        )
         page = context.new_page()
+        page.clock.set_fixed_time("2026-08-08T20:00:00Z")
         target_url = self._url_with_sid(start_url or f"{self.base_url}/", sid)
         page.goto(target_url, wait_until="domcontentloaded", timeout=30_000)
         page.add_style_tag(content=STABILITY_CSS)
@@ -268,7 +286,9 @@ class BundleCollector:
         initial_state: dict[str, Any],
     ) -> BundleArtifact:
         base_sid = f"base-{uuid.uuid4()}"
-        base_context, base_page = self._new_page(base_sid, initial_state)
+        base_context, base_page = self._new_page(
+            base_sid, initial_state, render_seed=seed
+        )
         try:
             warmups = self._choose_warmups(base_page, seed) if self.allow_warmups else []
             current_png = self._settle(base_page)
@@ -300,7 +320,10 @@ class BundleCollector:
             for _ in range(self.maximum_branch_reset_attempts):
                 sid = f"branch-{candidate_index}-{uuid.uuid4()}"
                 context, page = self._new_page(
-                    sid, branch_initial_state, start_url=branch_start_url
+                    sid,
+                    branch_initial_state,
+                    start_url=branch_start_url,
+                    render_seed=seed,
                 )
                 try:
                     branch_start_png = self._settle(page)
@@ -321,10 +344,13 @@ class BundleCollector:
                         break
                     changed = changed_pixel_fraction(current_png, after_png)
                     state_diff = self._state_diff(sid)
-                    if changed < self.minimum_changed_fraction and not state_diff:
+                    if changed < self.minimum_changed_fraction:
                         action_candidate_failures[
                             "action_had_no_observable_effect"
                         ] += 1
+                        break
+                    if changed > self.maximum_changed_fraction:
+                        action_candidate_failures["action_changed_too_much"] += 1
                         break
 
                     after_webp = png_to_lossless_webp(after_png)

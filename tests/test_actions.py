@@ -22,3 +22,17 @@ def test_selection_prefers_action_type_diversity() -> None:
     ]
     selected = choose_distinct_actions(candidates, count=4, seed=7)
     assert {action.kind for action in selected} == {"click", "scroll", "type", "press"}
+
+
+def test_selection_removes_exact_duplicate_actions() -> None:
+    duplicate = Action(kind="scroll", x=200, y=200, delta_y=400)
+    candidates = [
+        duplicate,
+        duplicate,
+        Action(kind="click", x=10, y=10),
+        Action(kind="click", x=100, y=100),
+        Action(kind="type", x=300, y=40, text="hello"),
+    ]
+    selected = choose_distinct_actions(candidates, count=4, seed=3)
+    assert len(selected) == 4
+    assert selected.count(duplicate) == 1

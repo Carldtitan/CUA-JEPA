@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import signal
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -53,6 +56,21 @@ APP_NAME = "cua-jepa-synthetic-data"
 VOLUME_NAME = "cua-jepa-synthetic-v1"
 REMOTE_DATA_ROOT = Path("/dataset")
 
+EXPECTED_PACKAGE_NAMES = {
+    "github_mock": "git-mock",
+    "gitlab_mock": "gitlab-mock",
+    "gmail_mock": "gmail-clone",
+    "google_docs_mock": "google_docs_mock",
+    "google_sheets_mock": "spreadsheet-mock",
+    "jira_mock": "jira-clone",
+    "outlook_web_mock": "outlook-mock",
+    "salesforce_mock": "salesforce-crm",
+    "shopify_admin_mock": "shopify-mock-admin",
+    "slack_mock": "slack-clone",
+    "stripe_dashboard_mock": "stripe-mock-dashboard",
+    "trello_mock": "trello-clone",
+}
+
 
 def _require_local_inputs() -> None:
     missing = [path for path in (CATALOG_PATH, HUB_APPS_PATH) if not path.exists()]
@@ -96,7 +114,18 @@ app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
 
 
-def _wait_for_server(url: str, process: subprocess.Popen, log_path: Path) -> None:
+def _reserve_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.bind(("127.0.0.1", 0))
+        return int(server_socket.getsockname()[1])
+
+
+def _wait_for_server(
+    url: str,
+    process: subprocess.Popen,
+    log_path: Path,
+    expected_app: str,
+) -> None:
     import requests
 
     for _ in range(90):
@@ -105,11 +134,32 @@ def _wait_for_server(url: str, process: subprocess.Popen, log_path: Path) -> Non
             raise RuntimeError(f"Mock server exited early:\n{tail}")
         try:
             if requests.get(url, timeout=1).status_code == 200:
+                identity = requests.get(
+                    f"{url}/__cua_jepa_app_id.txt", timeout=1
+                ).text.strip()
+                if identity != expected_app:
+                    raise RuntimeError(
+                        f"Wrong app server at {url}: {identity!r} != {expected_app!r}"
+                    )
                 return
         except requests.RequestException:
             pass
         time.sleep(0.5)
     raise TimeoutError(f"Mock server did not become ready: {url}")
+
+
+def _stop_process_group(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=10)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=10)
 
 
 def _load_remote_catalog(app_name: str) -> list[dict[str, Any]]:
@@ -149,28 +199,39 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
         return existing
 
     app_dir = Path("/opt/cua-jepa/apps") / spec.app
+    package_name = json.loads(
+        (app_dir / "package.json").read_text(encoding="utf-8")
+    ).get("name")
+    if package_name != EXPECTED_PACKAGE_NAMES[spec.app]:
+        raise RuntimeError(f"Wrong app package for {spec.app}: {package_name!r}")
     states = _load_remote_catalog(spec.app)
     with tempfile.TemporaryDirectory(prefix="cua-jepa-") as temporary:
         temp_root = Path(temporary)
         server_log = temp_root / "vite.log"
+        marker_dir = app_dir / "public"
+        marker_dir.mkdir(exist_ok=True)
+        (marker_dir / "__cua_jepa_app_id.txt").write_text(
+            spec.app, encoding="utf-8"
+        )
+        port = _reserve_local_port()
+        base_url = f"http://127.0.0.1:{port}"
         with server_log.open("wb") as log_handle:
             server = subprocess.Popen(
                 [
-                    "npm",
-                    "run",
-                    "dev",
-                    "--",
+                    "node",
+                    "node_modules/vite/bin/vite.js",
                     "--host",
                     "127.0.0.1",
                     "--port",
-                    "5173",
+                    str(port),
                 ],
                 cwd=app_dir,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
         try:
-            _wait_for_server("http://127.0.0.1:5173", server, server_log)
+            _wait_for_server(base_url, server, server_log, spec.app)
             temporary_tar = temp_root / f"{spec.name}.partial"
             final_tar = temp_root / spec.name
             metadata: list[dict[str, Any]] = []
@@ -184,7 +245,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                 browser = playwright.chromium.launch(headless=True)
                 collector = BundleCollector(
                     browser=browser,
-                    base_url="http://127.0.0.1:5173",
+                    base_url=base_url,
                     app=spec.app,
                     split=spec.split,
                     viewport_width=CONFIG.viewport.width,
@@ -203,6 +264,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                         spec.app not in CONFIG.quality.warmup_disabled_apps
                     ),
                     minimum_changed_fraction=CONFIG.quality.minimum_changed_pixel_fraction,
+                    maximum_changed_fraction=CONFIG.quality.maximum_changed_pixel_fraction,
                 )
                 with tarfile.open(temporary_tar, mode="w") as tar:
                     while len(metadata) < spec.bundle_count and attempts < maximum_attempts:
@@ -260,11 +322,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
             manifest["resumed"] = False
             return manifest
         finally:
-            server.terminate()
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.kill()
+            _stop_process_group(server)
 
 
 def _download_volume_file(
@@ -391,8 +449,21 @@ def _pilot_passes(results: list[dict]) -> tuple[bool, dict[str, Any]]:
     accepted = sum(result["accepted_bundles"] for result in results)
     attempts = sum(result["attempts"] for result in results)
     failures = Counter()
+    action_kinds = Counter()
+    per_app: dict[str, dict[str, Any]] = {}
     for result in results:
         failures.update(result["failures"])
+        action_kinds.update(result["action_kinds"])
+        app_name = result["spec"]["app"]
+        app_attempts = result["attempts"]
+        per_app[app_name] = {
+            "accepted_bundles": result["accepted_bundles"],
+            "attempts": app_attempts,
+            "acceptance_rate": result["accepted_bundles"] / app_attempts,
+            "action_kinds": result["action_kinds"],
+            "quality": result["quality"],
+            "failures": result["failures"],
+        }
     acceptance_rate = accepted / attempts if attempts else 0.0
     reset_failures = failures.get("nonidentical_branch_start", 0) + failures.get(
         "branch_start_hash_mismatch", 0
@@ -403,12 +474,26 @@ def _pilot_passes(results: list[dict]) -> tuple[bool, dict[str, Any]]:
         "attempts": attempts,
         "acceptance_rate": acceptance_rate,
         "identical_reset_rate": identical_reset_rate,
+        "action_kinds": dict(action_kinds),
+        "per_app": per_app,
         "failures": dict(failures),
     }
+    quality_invariants_hold = all(
+        result["quality"]["minimum_changed_pixel_fraction"]
+        >= CONFIG.quality.minimum_changed_pixel_fraction
+        and result["quality"]["maximum_changed_pixel_fraction"]
+        <= CONFIG.quality.maximum_changed_pixel_fraction
+        and result["quality"]["maximum_reset_changed_pixel_fraction"]
+        <= CONFIG.quality.maximum_reset_changed_pixel_fraction
+        and result["quality"]["duplicate_action_bundles"] == 0
+        for result in results
+    )
     passed = (
         accepted == CONFIG.pilot_bundles
         and acceptance_rate >= CONFIG.quality.minimum_bundle_acceptance_rate
         and identical_reset_rate >= CONFIG.quality.minimum_identical_reset_rate
+        and all(action_kinds[kind] > 0 for kind in ("click", "scroll", "type"))
+        and quality_invariants_hold
     )
     return passed, report
 

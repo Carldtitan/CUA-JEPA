@@ -75,13 +75,22 @@ ENUMERATE_SCRIPT = r"""
     });
   }
 
-  const active = document.activeElement;
-  let canType = false;
-  if (active && visible(active)) {
-    const tag = active.tagName.toLowerCase();
-    const type = String(active.getAttribute('type') || 'text').toLowerCase();
-    canType = active.isContentEditable || tag === 'textarea' ||
-      (tag === 'input' && !['button','checkbox','radio','submit','file','hidden'].includes(type));
+  const typeTargets = [];
+  const typeSelector = [
+    'input:not([type])', 'input[type="text"]', 'input[type="search"]',
+    'input[type="email"]', 'input[type="url"]', 'input[type="tel"]',
+    'textarea', '[contenteditable="true"]'
+  ].join(',');
+  for (const el of document.querySelectorAll(typeSelector)) {
+    if (!visible(el) || el.readOnly) continue;
+    const r = el.getBoundingClientRect();
+    typeTargets.push({
+      kind: 'type',
+      x: Math.max(1, Math.min(innerWidth - 2, r.left + r.width / 2)),
+      y: Math.max(1, Math.min(innerHeight - 2, r.top + r.height / 2)),
+      element_hint: hint(el)
+    });
+    if (typeTargets.length >= 6) break;
   }
 
   const scrolls = [];
@@ -100,7 +109,7 @@ ENUMERATE_SCRIPT = r"""
     });
     if (scrolls.length >= 4) break;
   }
-  return {clicks, scrolls, can_type: canType};
+  return {clicks, scrolls, type_targets: typeTargets};
 }
 """
 
@@ -109,9 +118,13 @@ def enumerate_actions(page: Page, seed: int, text_suffix: str = "") -> list[Acti
     raw = page.evaluate(ENUMERATE_SCRIPT)
     actions = [Action(**candidate) for candidate in raw["clicks"]]
     actions.extend(Action(**candidate) for candidate in raw["scrolls"])
-    if raw["can_type"]:
-        actions.append(Action(kind="type", text=f"Synthetic note {text_suffix}".strip()))
-        actions.append(Action(kind="press", key="Enter"))
+    for index, candidate in enumerate(raw["type_targets"]):
+        actions.append(
+            Action(
+                **candidate,
+                text=f"Synthetic {text_suffix}-{index}".strip("-"),
+            )
+        )
     rng = random.Random(seed)
     rng.shuffle(actions)
     return actions
@@ -121,7 +134,20 @@ def choose_distinct_actions(candidates: list[Action], count: int, seed: int) -> 
     """Choose actions while avoiding four nearly identical coordinates."""
     rng = random.Random(seed)
     by_kind: dict[str, list[Action]] = {}
+    seen: set[tuple] = set()
     for action in candidates:
+        identity = (
+            action.kind,
+            action.x,
+            action.y,
+            action.text,
+            action.key,
+            action.delta_x,
+            action.delta_y,
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
         by_kind.setdefault(action.kind, []).append(action)
     for group in by_kind.values():
         rng.shuffle(group)
@@ -161,6 +187,9 @@ def execute_action(page: Page, action: Action) -> None:
         page.mouse.move(action.x, action.y)
         page.mouse.wheel(action.delta_x or 0, action.delta_y or 0)
     elif action.kind == "type":
+        if action.x is not None and action.y is not None:
+            page.mouse.click(action.x, action.y)
+            page.keyboard.press("ControlOrMeta+A")
         page.keyboard.type(action.text or "Synthetic note")
     elif action.kind == "press":
         page.keyboard.press(action.key or "Enter")
