@@ -56,7 +56,7 @@ if modal.is_local():
         )
         .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
         .add_local_python_source("cua_jepa", copy=True)
-        .add_local_file(LOCAL_CONFIG_PATH, REMOTE_CONFIG_PATH, copy=True)
+        .add_local_file(LOCAL_CONFIG_PATH, str(REMOTE_CONFIG_PATH), copy=True)
         .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
     )
     for app_name in ALL_APPS:
