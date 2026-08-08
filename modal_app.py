@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import tarfile
@@ -275,7 +276,7 @@ def _local_bytes(path: Path) -> int:
 def _run_specs(
     specs: list[ShardSpec], run_id: str, local_root: Path, deadline: float
 ) -> list[dict]:
-    results: list[dict] = []
+    remote_results: list[dict] = []
     errors: list[str] = []
     batch_size = CONFIG.maximum_remote_workers
     for offset in range(0, len(specs), batch_size):
@@ -289,46 +290,8 @@ def _run_specs(
             if isinstance(result, BaseException):
                 errors.append(repr(result))
                 continue
-            remote_tar = result["volume_path"]
-            relative = Path(remote_tar)
-            local_tar = local_root / relative
-            for suffix in (".json", ".sha256"):
-                remote_file = str(relative.with_suffix(suffix)).replace("\\", "/")
-                local_file = local_tar.with_suffix(suffix)
-                _download_volume_file(remote_file, local_file)
-            if not local_tar.exists() or file_sha256(local_tar) != result["sha256"]:
-                _download_volume_file(remote_tar, local_tar)
-            actual_sha256 = file_sha256(local_tar)
-            if actual_sha256 != result["sha256"]:
-                local_tar.unlink(missing_ok=True)
-                raise RuntimeError(
-                    f"Checksum mismatch for {relative}: "
-                    f"{actual_sha256} != {result['sha256']}"
-                )
-            results.append(result)
+            remote_results.append(result)
 
-            run_dir = local_root / run_id
-            used = _local_bytes(run_dir)
-            if used > CONFIG.maximum_local_bytes:
-                raise RuntimeError(
-                    f"Local data limit exceeded: {used} > {CONFIG.maximum_local_bytes}"
-                )
-            report = {
-                "run_id": run_id,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "completed_shards": len(results),
-                "accepted_bundles": sum(item["accepted_bundles"] for item in results),
-                "transitions": sum(item["transitions"] for item in results),
-                "local_bytes": used,
-                "shards": results,
-            }
-            report_path = run_dir / "progress.json"
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-            print(
-                f"[{len(results)}/{len(specs)}] {relative.name}: "
-                f"{report['accepted_bundles']} bundles, {used / 2**30:.2f} GiB local"
-            )
         if errors:
             run_dir = local_root / run_id
             error_report = {
@@ -344,6 +307,55 @@ def _run_specs(
                 f"{len(errors)} shard(s) failed; see {error_path}: "
                 + " | ".join(errors)
             )
+
+        print(
+            f"Modal generation complete for batch "
+            f"{offset // batch_size + 1}/{math.ceil(len(specs) / batch_size)}; "
+            "durable shards are ready for backup"
+        )
+
+    results: list[dict] = []
+    for result in remote_results:
+        remote_tar = result["volume_path"]
+        relative = Path(remote_tar)
+        local_tar = local_root / relative
+        for suffix in (".json", ".sha256"):
+            remote_file = str(relative.with_suffix(suffix)).replace("\\", "/")
+            local_file = local_tar.with_suffix(suffix)
+            _download_volume_file(remote_file, local_file)
+        if not local_tar.exists() or file_sha256(local_tar) != result["sha256"]:
+            _download_volume_file(remote_tar, local_tar)
+        actual_sha256 = file_sha256(local_tar)
+        if actual_sha256 != result["sha256"]:
+            local_tar.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Checksum mismatch for {relative}: "
+                f"{actual_sha256} != {result['sha256']}"
+            )
+        results.append(result)
+
+        run_dir = local_root / run_id
+        used = _local_bytes(run_dir)
+        if used > CONFIG.maximum_local_bytes:
+            raise RuntimeError(
+                f"Local data limit exceeded: {used} > {CONFIG.maximum_local_bytes}"
+            )
+        report = {
+            "run_id": run_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "completed_shards": len(results),
+            "accepted_bundles": sum(item["accepted_bundles"] for item in results),
+            "transitions": sum(item["transitions"] for item in results),
+            "local_bytes": used,
+            "shards": results,
+        }
+        report_path = run_dir / "progress.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(
+            f"[{len(results)}/{len(specs)}] {relative.name}: "
+            f"{report['accepted_bundles']} bundles, {used / 2**30:.2f} GiB local"
+        )
     return results
 
 
