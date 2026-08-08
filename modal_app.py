@@ -26,10 +26,11 @@ from cua_jepa.shards import (
 
 
 ROOT = Path(__file__).parent
-CONFIG_PATH = ROOT / "configs" / "dataset_v1.json"
+LOCAL_CONFIG_PATH = ROOT / "configs" / "dataset_v1.json"
+REMOTE_CONFIG_PATH = Path("/opt/cua-jepa/dataset_v1.json")
 CATALOG_PATH = ROOT / ".cache" / "state_catalog.json"
 HUB_APPS_PATH = ROOT / ".vendor" / "CUA-Gym" / "hub" / "websites"
-CONFIG = load_config(CONFIG_PATH)
+CONFIG = load_config(LOCAL_CONFIG_PATH if modal.is_local() else REMOTE_CONFIG_PATH)
 ALL_APPS = tuple(
     sorted({app for split in CONFIG.splits.values() for app in split.apps})
 )
@@ -47,31 +48,33 @@ def _require_local_inputs() -> None:
         raise RuntimeError(f"Missing collection inputs:\n{joined}")
 
 
-_require_local_inputs()
-
-image = (
-    modal.Image.from_registry(
-        "mcr.microsoft.com/playwright:v1.59.0-noble", add_python="3.12"
+if modal.is_local():
+    _require_local_inputs()
+    image = (
+        modal.Image.from_registry(
+            "mcr.microsoft.com/playwright:v1.59.0-noble", add_python="3.12"
+        )
+        .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
+        .add_local_python_source("cua_jepa", copy=True)
+        .add_local_file(LOCAL_CONFIG_PATH, REMOTE_CONFIG_PATH, copy=True)
+        .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
     )
-    .pip_install("pillow>=10,<13", "playwright==1.59.0", "requests>=2.31,<3")
-    .add_local_python_source("cua_jepa", copy=True)
-    .add_local_file(CATALOG_PATH, "/opt/cua-jepa/state_catalog.json", copy=True)
-)
+    for app_name in ALL_APPS:
+        image = image.add_local_dir(
+            HUB_APPS_PATH / app_name,
+            f"/opt/cua-jepa/apps/{app_name}",
+            copy=True,
+            ignore=["node_modules", ".mock-states", "dist"],
+        )
 
-for app_name in ALL_APPS:
-    image = image.add_local_dir(
-        HUB_APPS_PATH / app_name,
-        f"/opt/cua-jepa/apps/{app_name}",
-        copy=True,
-        ignore=["node_modules", ".mock-states", "dist"],
+    image = image.run_commands(
+        *[
+            f"cd /opt/cua-jepa/apps/{app_name} && npm ci --no-audit --no-fund"
+            for app_name in ALL_APPS
+        ]
     )
-
-image = image.run_commands(
-    *[
-        f"cd /opt/cua-jepa/apps/{app_name} && npm ci --no-audit --no-fund"
-        for app_name in ALL_APPS
-    ]
-)
+else:
+    image = modal.Image.debian_slim()
 
 app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
