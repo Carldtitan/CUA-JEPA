@@ -1,0 +1,53 @@
+{
+  "dataset_name": "cua_jepa_synthetic_v1",
+  "seed": 20260808,
+  "viewport": {
+    "width": 1280,
+    "height": 720,
+    "device_scale_factor": 1
+  },
+  "actions_per_bundle": 4,
+  "bundles_per_shard": 25,
+  "pilot_bundles": 100,
+  "maximum_local_bytes": 32212254720,
+  "maximum_runtime_hours": 10,
+  "maximum_remote_workers": 12,
+  "splits": {
+    "train": {
+      "bundles": 8000,
+      "apps": [
+        "gmail_mock",
+        "google_calendar_mock",
+        "google_sheets_mock",
+        "notion_mock",
+        "shopify_admin_mock",
+        "salesforce_mock",
+        "github_mock",
+        "stripe_dashboard_mock"
+      ]
+    },
+    "validation": {
+      "bundles": 500,
+      "apps": [
+        "slack_mock",
+        "jira_mock"
+      ]
+    },
+    "test": {
+      "bundles": 500,
+      "apps": [
+        "outlook_web_mock",
+        "trello_mock"
+      ]
+    }
+  },
+  "quality": {
+    "minimum_bundle_acceptance_rate": 0.85,
+    "minimum_identical_reset_rate": 0.90,
+    "minimum_changed_pixel_fraction": 0.0001,
+    "maximum_changed_pixel_fraction": 0.95,
+    "maximum_generation_attempts_per_bundle": 8,
+    "replay_fraction": 0.05
+  }
+}
+
