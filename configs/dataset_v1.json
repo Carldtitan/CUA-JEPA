@@ -17,9 +17,9 @@
       "bundles": 8000,
       "apps": [
         "gmail_mock",
-        "google_calendar_mock",
+        "google_docs_mock",
         "google_sheets_mock",
-        "notion_mock",
+        "gitlab_mock",
         "shopify_admin_mock",
         "salesforce_mock",
         "github_mock",
