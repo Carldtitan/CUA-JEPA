@@ -17,6 +17,7 @@ class Viewport:
 class QualityConfig:
     minimum_bundle_acceptance_rate: float
     minimum_identical_reset_rate: float
+    maximum_reset_changed_pixel_fraction: float
     minimum_changed_pixel_fraction: float
     maximum_changed_pixel_fraction: float
     maximum_generation_attempts_per_bundle: int
@@ -70,4 +71,3 @@ def load_config(path: str | Path) -> DatasetConfig:
         },
         quality=QualityConfig(**raw["quality"]),
     )
-

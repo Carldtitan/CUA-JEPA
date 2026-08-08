@@ -2,11 +2,14 @@ from cua_jepa.actions import Action, choose_distinct_actions
 
 
 def test_action_serializes_normalized_coordinates() -> None:
-    action = Action(kind="click", x=640, y=360, element_hint="Compose")
+    action = Action(
+        kind="click", x=640, y=360, element_hint="Compose", warmup_safe=True
+    )
     value = action.as_dict(1280, 720)
     assert value["x_normalized"] == 0.5
     assert value["y_normalized"] == 0.5
     assert "element_hint" not in value
+    assert "warmup_safe" not in value
 
 
 def test_selection_prefers_action_type_diversity() -> None:

@@ -17,6 +17,7 @@ class Action:
     delta_x: int | None = None
     delta_y: int | None = None
     element_hint: str | None = None
+    warmup_safe: bool | None = None
 
     def as_dict(
         self, viewport_width: int, viewport_height: int, include_hint: bool = False
@@ -24,6 +25,7 @@ class Action:
         result = asdict(self)
         if not include_hint:
             result.pop("element_hint", None)
+        result.pop("warmup_safe", None)
         if self.x is not None and self.y is not None:
             result["x_normalized"] = round(self.x / viewport_width, 6)
             result["y_normalized"] = round(self.y / viewport_height, 6)
@@ -60,7 +62,17 @@ ENUMERATE_SCRIPT = r"""
     const key = `${Math.round(x / 4)}:${Math.round(y / 4)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    clicks.push({kind: 'click', x, y, element_hint: hint(el)});
+    let warmupSafe = false;
+    if (el.tagName === 'A' && el.href && el.target !== '_blank') {
+      try {
+        warmupSafe = new URL(el.href, location.href).origin === location.origin;
+      } catch (_) {
+        warmupSafe = false;
+      }
+    }
+    clicks.push({
+      kind: 'click', x, y, element_hint: hint(el), warmup_safe: warmupSafe
+    });
   }
 
   const active = document.activeElement;

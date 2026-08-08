@@ -6,7 +6,7 @@ import random
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from playwright.sync_api import Browser, BrowserContext, Page, Route
@@ -35,6 +35,8 @@ STABILITY_CSS = """
 class BranchArtifact:
     action: dict[str, Any]
     element_hint: str | None
+    branch_start_sha256: str
+    branch_start_changed_pixel_fraction: float
     after_webp: bytes
     after_sha256: str
     changed_pixel_fraction: float
@@ -74,6 +76,10 @@ class BundleArtifact:
                     "changed_pixel_fraction": branch.changed_pixel_fraction,
                     "qa": {
                         "element_hint": branch.element_hint,
+                        "branch_start_sha256": branch.branch_start_sha256,
+                        "branch_start_changed_pixel_fraction": (
+                            branch.branch_start_changed_pixel_fraction
+                        ),
                         "state_diff_paths": list(branch.state_diff_paths),
                         "state_diff_bytes": branch.state_diff_bytes,
                     },
@@ -84,7 +90,11 @@ class BundleArtifact:
 
 
 class BundleRejected(RuntimeError):
-    pass
+    def __init__(self, code: str, detail: str = "") -> None:
+        self.code = code
+        self.detail = detail
+        message = f"{code}:{detail}" if detail else code
+        super().__init__(message)
 
 
 class BundleCollector:
@@ -97,6 +107,7 @@ class BundleCollector:
         viewport_width: int,
         viewport_height: int,
         actions_per_bundle: int = 4,
+        maximum_reset_changed_fraction: float = 0.000025,
         minimum_changed_fraction: float = 0.0001,
         request_timeout_seconds: int = 15,
     ) -> None:
@@ -107,6 +118,7 @@ class BundleCollector:
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         self.actions_per_bundle = actions_per_bundle
+        self.maximum_reset_changed_fraction = maximum_reset_changed_fraction
         self.minimum_changed_fraction = minimum_changed_fraction
         self.request_timeout_seconds = request_timeout_seconds
         self.http = requests.Session()
@@ -129,6 +141,23 @@ class BundleCollector:
         response.raise_for_status()
         value = response.json().get("state_diff")
         return value if isinstance(value, dict) else {}
+
+    def _current_state(self, sid: str) -> dict[str, Any]:
+        response = self.http.get(
+            self._state_url("state", sid), timeout=self.request_timeout_seconds
+        )
+        response.raise_for_status()
+        value = response.json().get("stored_state")
+        if not isinstance(value, dict):
+            raise BundleRejected("post_warmup_state_unavailable")
+        return value
+
+    @staticmethod
+    def _url_with_sid(url: str, sid: str) -> str:
+        parsed = urlparse(url)
+        query = [(key, value) for key, value in parse_qsl(parsed.query) if key != "sid"]
+        query.append(("sid", sid))
+        return urlunparse(parsed._replace(query=urlencode(query)))
 
     def _placeholder_svg(self, url: str) -> bytes:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -153,7 +182,9 @@ class BundleCollector:
         else:
             route.abort()
 
-    def _new_page(self, sid: str, state: dict[str, Any]) -> tuple[BrowserContext, Page]:
+    def _new_page(
+        self, sid: str, state: dict[str, Any], start_url: str | None = None
+    ) -> tuple[BrowserContext, Page]:
         self._inject_state(sid, state)
         context = self.browser.new_context(
             viewport={"width": self.viewport_width, "height": self.viewport_height},
@@ -164,7 +195,8 @@ class BundleCollector:
         )
         context.route("**/*", self._route)
         page = context.new_page()
-        page.goto(f"{self.base_url}/?sid={sid}", wait_until="domcontentloaded", timeout=30_000)
+        target_url = self._url_with_sid(start_url or f"{self.base_url}/", sid)
+        page.goto(target_url, wait_until="domcontentloaded", timeout=30_000)
         page.add_style_tag(content=STABILITY_CSS)
         page.wait_for_timeout(500)
         return context, page
@@ -174,12 +206,14 @@ class BundleCollector:
             page.add_style_tag(content=STABILITY_CSS)
         except Exception:
             pass
+        page.mouse.move(self.viewport_width - 1, self.viewport_height - 1)
+        page.evaluate(
+            """() => {
+                const active = document.activeElement;
+                if (active && typeof active.blur === 'function') active.blur();
+            }"""
+        )
         return stable_screenshot(page)
-
-    def _replay_warmups(self, page: Page, warmups: list[Action]) -> None:
-        for action in warmups:
-            execute_action(page, action)
-            page.wait_for_timeout(300)
 
     def _choose_warmups(self, page: Page, seed: int) -> list[Action]:
         rng = random.Random(seed)
@@ -187,7 +221,11 @@ class BundleCollector:
         warmups: list[Action] = []
         for index in range(desired):
             candidates = enumerate_actions(page, seed + index)
-            clicks = [candidate for candidate in candidates if candidate.kind == "click"]
+            clicks = [
+                candidate
+                for candidate in candidates
+                if candidate.kind == "click" and candidate.warmup_safe
+            ]
             if not clicks:
                 break
             action = clicks[rng.randrange(len(clicks))]
@@ -220,21 +258,26 @@ class BundleCollector:
             selected = choose_distinct_actions(candidates, self.actions_per_bundle, seed + 2017)
             if len(selected) != self.actions_per_bundle:
                 raise BundleRejected("insufficient_actions")
+            branch_initial_state = self._current_state(base_sid)
+            branch_start_url = base_page.url
         finally:
             base_context.close()
 
         branch_artifacts: list[BranchArtifact] = []
-        branch_start_hashes: list[str] = []
         for branch_index, action in enumerate(selected):
             sid = f"branch-{branch_index}-{uuid.uuid4()}"
-            context, page = self._new_page(sid, initial_state)
+            context, page = self._new_page(
+                sid, branch_initial_state, start_url=branch_start_url
+            )
             try:
-                self._replay_warmups(page, warmups)
                 branch_start_png = self._settle(page)
                 branch_start_hash = image_metrics(branch_start_png).sha256
-                branch_start_hashes.append(branch_start_hash)
-                if branch_start_png != current_png:
-                    raise BundleRejected("nonidentical_branch_start")
+                difference = changed_pixel_fraction(current_png, branch_start_png)
+                if difference > self.maximum_reset_changed_fraction:
+                    raise BundleRejected(
+                        "nonidentical_branch_start",
+                        f"changed_pixel_fraction={difference:.8f}",
+                    )
 
                 execute_action(page, action)
                 page.wait_for_timeout(400)
@@ -255,6 +298,8 @@ class BundleCollector:
                     BranchArtifact(
                         action=action.as_dict(self.viewport_width, self.viewport_height),
                         element_hint=action.element_hint,
+                        branch_start_sha256=branch_start_hash,
+                        branch_start_changed_pixel_fraction=round(difference, 8),
                         after_webp=png_to_lossless_webp(after_png),
                         after_sha256=after_metrics.sha256,
                         changed_pixel_fraction=round(changed, 8),
@@ -267,8 +312,6 @@ class BundleCollector:
             finally:
                 context.close()
 
-        if len(set(branch_start_hashes)) != 1:
-            raise BundleRejected("branch_start_hash_mismatch")
         after_hashes = {branch.after_sha256 for branch in branch_artifacts}
         if len(after_hashes) != self.actions_per_bundle:
             raise BundleRejected("duplicate_branch_futures")

@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=Path("configs/dataset_v1.json"))
     parser.add_argument("--catalog", type=Path, default=Path(".cache/state_catalog.json"))
     parser.add_argument("--output", type=Path, default=Path("data/pilot/local-smoke"))
+    parser.add_argument("--seed-offset", type=int, default=0)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -35,6 +36,9 @@ def main() -> None:
             viewport_width=config.viewport.width,
             viewport_height=config.viewport.height,
             actions_per_bundle=config.actions_per_bundle,
+            maximum_reset_changed_fraction=(
+                config.quality.maximum_reset_changed_pixel_fraction
+            ),
             minimum_changed_fraction=config.quality.minimum_changed_pixel_fraction,
         )
         artifact = None
@@ -43,7 +47,7 @@ def main() -> None:
             try:
                 artifact = collector.generate(
                     bundle_id=f"local-smoke-{attempt:02d}",
-                    seed=config.seed + attempt,
+                    seed=config.seed + args.seed_offset + attempt,
                     source_task_id=state_entry["source_task_id"],
                     initial_state=state_entry["state"],
                 )
@@ -68,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

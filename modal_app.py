@@ -190,6 +190,9 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                     viewport_width=CONFIG.viewport.width,
                     viewport_height=CONFIG.viewport.height,
                     actions_per_bundle=CONFIG.actions_per_bundle,
+                    maximum_reset_changed_fraction=(
+                        CONFIG.quality.maximum_reset_changed_pixel_fraction
+                    ),
                     minimum_changed_fraction=CONFIG.quality.minimum_changed_pixel_fraction,
                 )
                 with tarfile.open(temporary_tar, mode="w") as tar:
@@ -219,7 +222,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                                 initial_state=state,
                             )
                         except BundleRejected as exc:
-                            failures[str(exc)] += 1
+                            failures[exc.code] += 1
                             continue
                         metadata.append(add_bundle(tar, artifact))
                 browser.close()
