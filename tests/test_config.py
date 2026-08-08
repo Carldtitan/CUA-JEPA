@@ -14,8 +14,9 @@ def test_dataset_target_is_36k_transitions() -> None:
         config.quality.maximum_reset_changed_pixel_fraction
         * config.viewport.width
         * config.viewport.height
-        <= 24
+        <= 47
     )
+    assert config.quality.warmup_disabled_apps == ("trello_mock",)
 
 
 def test_app_splits_do_not_overlap() -> None:

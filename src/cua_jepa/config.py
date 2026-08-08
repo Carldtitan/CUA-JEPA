@@ -20,6 +20,7 @@ class QualityConfig:
     maximum_action_candidates_per_bundle: int
     maximum_branch_reset_attempts: int
     maximum_reset_changed_pixel_fraction: float
+    warmup_disabled_apps: tuple[str, ...]
     minimum_changed_pixel_fraction: float
     maximum_changed_pixel_fraction: float
     maximum_generation_attempts_per_bundle: int
@@ -57,6 +58,8 @@ class DatasetConfig:
 
 def load_config(path: str | Path) -> DatasetConfig:
     raw: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+    quality = dict(raw["quality"])
+    quality["warmup_disabled_apps"] = tuple(quality["warmup_disabled_apps"])
     return DatasetConfig(
         dataset_name=raw["dataset_name"],
         seed=int(raw["seed"]),
@@ -71,5 +74,5 @@ def load_config(path: str | Path) -> DatasetConfig:
             name: SplitConfig(bundles=int(value["bundles"]), apps=tuple(value["apps"]))
             for name, value in raw["splits"].items()
         },
-        quality=QualityConfig(**raw["quality"]),
+        quality=QualityConfig(**quality),
     )

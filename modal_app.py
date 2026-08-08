@@ -199,6 +199,9 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                     maximum_reset_changed_fraction=(
                         CONFIG.quality.maximum_reset_changed_pixel_fraction
                     ),
+                    allow_warmups=(
+                        spec.app not in CONFIG.quality.warmup_disabled_apps
+                    ),
                     minimum_changed_fraction=CONFIG.quality.minimum_changed_pixel_fraction,
                 )
                 with tarfile.open(temporary_tar, mode="w") as tar:

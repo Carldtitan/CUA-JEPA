@@ -45,6 +45,7 @@ def main() -> None:
             maximum_reset_changed_fraction=(
                 config.quality.maximum_reset_changed_pixel_fraction
             ),
+            allow_warmups=(args.app not in config.quality.warmup_disabled_apps),
             minimum_changed_fraction=config.quality.minimum_changed_pixel_fraction,
         )
         artifact = None

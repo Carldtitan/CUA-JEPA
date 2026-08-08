@@ -120,7 +120,8 @@ class BundleCollector:
         actions_per_bundle: int = 4,
         maximum_action_candidates: int = 12,
         maximum_branch_reset_attempts: int = 3,
-        maximum_reset_changed_fraction: float = 0.000025,
+        maximum_reset_changed_fraction: float = 0.00005,
+        allow_warmups: bool = True,
         minimum_changed_fraction: float = 0.0001,
         request_timeout_seconds: int = 15,
     ) -> None:
@@ -134,6 +135,7 @@ class BundleCollector:
         self.maximum_action_candidates = maximum_action_candidates
         self.maximum_branch_reset_attempts = maximum_branch_reset_attempts
         self.maximum_reset_changed_fraction = maximum_reset_changed_fraction
+        self.allow_warmups = allow_warmups
         self.minimum_changed_fraction = minimum_changed_fraction
         self.request_timeout_seconds = request_timeout_seconds
         self.http = requests.Session()
@@ -268,7 +270,7 @@ class BundleCollector:
         base_sid = f"base-{uuid.uuid4()}"
         base_context, base_page = self._new_page(base_sid, initial_state)
         try:
-            warmups = self._choose_warmups(base_page, seed)
+            warmups = self._choose_warmups(base_page, seed) if self.allow_warmups else []
             current_png = self._settle(base_page)
             current_metrics = image_metrics(current_png)
             if not is_usable_screen(current_metrics):

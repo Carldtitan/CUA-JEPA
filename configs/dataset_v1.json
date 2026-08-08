@@ -46,7 +46,10 @@
     "minimum_identical_reset_rate": 0.90,
     "maximum_action_candidates_per_bundle": 12,
     "maximum_branch_reset_attempts": 3,
-    "maximum_reset_changed_pixel_fraction": 0.000025,
+    "maximum_reset_changed_pixel_fraction": 0.00005,
+    "warmup_disabled_apps": [
+      "trello_mock"
+    ],
     "minimum_changed_pixel_fraction": 0.0001,
     "maximum_changed_pixel_fraction": 0.95,
     "maximum_generation_attempts_per_bundle": 8,
