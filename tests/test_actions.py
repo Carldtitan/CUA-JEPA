@@ -6,6 +6,7 @@ def test_action_serializes_normalized_coordinates() -> None:
     value = action.as_dict(1280, 720)
     assert value["x_normalized"] == 0.5
     assert value["y_normalized"] == 0.5
+    assert "element_hint" not in value
 
 
 def test_selection_prefers_action_type_diversity() -> None:
@@ -18,4 +19,3 @@ def test_selection_prefers_action_type_diversity() -> None:
     ]
     selected = choose_distinct_actions(candidates, count=4, seed=7)
     assert {action.kind for action in selected} == {"click", "scroll", "type", "press"}
-

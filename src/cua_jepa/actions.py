@@ -18,8 +18,12 @@ class Action:
     delta_y: int | None = None
     element_hint: str | None = None
 
-    def as_dict(self, viewport_width: int, viewport_height: int) -> dict[str, Any]:
+    def as_dict(
+        self, viewport_width: int, viewport_height: int, include_hint: bool = False
+    ) -> dict[str, Any]:
         result = asdict(self)
+        if not include_hint:
+            result.pop("element_hint", None)
         if self.x is not None and self.y is not None:
             result["x_normalized"] = round(self.x / viewport_width, 6)
             result["y_normalized"] = round(self.y / viewport_height, 6)
@@ -43,7 +47,8 @@ ENUMERATE_SCRIPT = r"""
   const selectors = [
     'button', 'a[href]', '[role="button"]', '[role="tab"]',
     '[role="menuitem"]', '[role="option"]', 'input[type="checkbox"]',
-    'input[type="radio"]', 'select', '[tabindex]:not([tabindex="-1"])'
+    'input[type="radio"]', 'input:not([type="hidden"])', 'textarea',
+    '[contenteditable="true"]', 'select', '[tabindex]:not([tabindex="-1"])'
   ].join(',');
   const seen = new Set();
   const clicks = [];
