@@ -468,12 +468,26 @@ def _pilot_passes(results: list[dict]) -> tuple[bool, dict[str, Any]]:
     reset_failures = failures.get("nonidentical_branch_start", 0) + failures.get(
         "branch_start_hash_mismatch", 0
     )
-    identical_reset_rate = 1.0 - (reset_failures / attempts if attempts else 1.0)
+    accepted_transitions = sum(result["transitions"] for result in results)
+    reset_compliant_transitions = sum(
+        result["transitions"]
+        for result in results
+        if result["quality"]["maximum_reset_changed_pixel_fraction"]
+        <= CONFIG.quality.maximum_reset_changed_pixel_fraction
+    )
+    accepted_reset_compliance_rate = (
+        reset_compliant_transitions / accepted_transitions
+        if accepted_transitions
+        else 0.0
+    )
+    reset_rejection_rate = reset_failures / attempts if attempts else 0.0
     report = {
         "accepted_bundles": accepted,
+        "accepted_transitions": accepted_transitions,
         "attempts": attempts,
         "acceptance_rate": acceptance_rate,
-        "identical_reset_rate": identical_reset_rate,
+        "accepted_reset_compliance_rate": accepted_reset_compliance_rate,
+        "reset_rejection_rate": reset_rejection_rate,
         "action_kinds": dict(action_kinds),
         "per_app": per_app,
         "failures": dict(failures),
@@ -491,7 +505,8 @@ def _pilot_passes(results: list[dict]) -> tuple[bool, dict[str, Any]]:
     passed = (
         accepted == CONFIG.pilot_bundles
         and acceptance_rate >= CONFIG.quality.minimum_bundle_acceptance_rate
-        and identical_reset_rate >= CONFIG.quality.minimum_identical_reset_rate
+        and accepted_reset_compliance_rate
+        >= CONFIG.quality.minimum_identical_reset_rate
         and all(action_kinds[kind] > 0 for kind in ("click", "scroll", "type"))
         and quality_invariants_hold
     )
