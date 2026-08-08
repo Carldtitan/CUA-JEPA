@@ -19,6 +19,8 @@ logs/
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.eggs/
 .pytest_cache/
 .ruff_cache/
 .venv/
@@ -35,4 +37,3 @@ outputs/
 .vscode/
 .DS_Store
 Thumbs.db
-
