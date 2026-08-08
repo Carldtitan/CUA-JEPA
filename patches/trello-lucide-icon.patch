@@ -1,0 +1,20 @@
+diff --git a/websites/trello_mock/src/components/Navbar.jsx b/websites/trello_mock/src/components/Navbar.jsx
+--- a/websites/trello_mock/src/components/Navbar.jsx
++++ b/websites/trello_mock/src/components/Navbar.jsx
+@@ -1,6 +1,6 @@
+ import React, { useState, useRef, useEffect } from 'react';
+ import { Link, useNavigate } from 'react-router-dom';
+-import { Xrello, Search, Bell, HelpCircle, X, Star, Users, Clock, ChevronDown, Layout, Settings, User } from 'lucide-react';
++import { Trello, Search, Bell, HelpCircle, X, Star, Users, Clock, ChevronDown, Layout, Settings, User } from 'lucide-react';
+ import { useStore } from '../context/StoreContext';
+ 
+ const Navbar = () => {
+@@ -197,7 +197,7 @@ const Navbar = () => {
+     <nav className="bg-[#026aa7] h-12 flex items-center px-2 text-white shadow-sm z-50 relative">
+       <div className="flex items-center gap-2">
+         <Link to="/" className="flex items-center gap-2 font-bold text-lg hover:bg-white/20 px-2 py-1 rounded">
+-          <Xrello size={20} />
++          <Trello size={20} />
+           <span className="hidden md:inline">TrelloClone</span>
+         </Link>
+ 
