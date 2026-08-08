@@ -4,6 +4,7 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -12,6 +13,15 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+if sys.platform == "win32":
+    # aiohttp otherwise prefers optional aiodns/pycares, which can fail to reach
+    # configured Windows DNS servers even when the system resolver works.
+    import aiohttp.connector
+    import aiohttp.resolver
+
+    aiohttp.connector.DefaultResolver = aiohttp.resolver.ThreadedResolver
+    aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
 
 import modal
 
