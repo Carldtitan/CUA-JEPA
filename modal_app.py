@@ -381,6 +381,9 @@ def _run_specs(
             f"[{len(results)}/{len(specs)}] {relative.name}: "
             f"{report['accepted_bundles']} bundles, {used / 2**30:.2f} GiB local"
         )
+    # A resumed run may inherit an error report from an interrupted controller.
+    # Once every requested shard is downloaded and verified, that report is stale.
+    (local_root / run_id / "errors.json").unlink(missing_ok=True)
     return results
 
 
