@@ -193,6 +193,9 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                     maximum_action_candidates=(
                         CONFIG.quality.maximum_action_candidates_per_bundle
                     ),
+                    maximum_branch_reset_attempts=(
+                        CONFIG.quality.maximum_branch_reset_attempts
+                    ),
                     maximum_reset_changed_fraction=(
                         CONFIG.quality.maximum_reset_changed_pixel_fraction
                     ),

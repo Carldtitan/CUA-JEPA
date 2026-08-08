@@ -39,6 +39,9 @@ def main() -> None:
             maximum_action_candidates=(
                 config.quality.maximum_action_candidates_per_bundle
             ),
+            maximum_branch_reset_attempts=(
+                config.quality.maximum_branch_reset_attempts
+            ),
             maximum_reset_changed_fraction=(
                 config.quality.maximum_reset_changed_pixel_fraction
             ),

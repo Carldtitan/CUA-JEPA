@@ -119,6 +119,7 @@ class BundleCollector:
         viewport_height: int,
         actions_per_bundle: int = 4,
         maximum_action_candidates: int = 12,
+        maximum_branch_reset_attempts: int = 3,
         maximum_reset_changed_fraction: float = 0.000025,
         minimum_changed_fraction: float = 0.0001,
         request_timeout_seconds: int = 15,
@@ -131,6 +132,7 @@ class BundleCollector:
         self.viewport_height = viewport_height
         self.actions_per_bundle = actions_per_bundle
         self.maximum_action_candidates = maximum_action_candidates
+        self.maximum_branch_reset_attempts = maximum_branch_reset_attempts
         self.maximum_reset_changed_fraction = maximum_reset_changed_fraction
         self.minimum_changed_fraction = minimum_changed_fraction
         self.request_timeout_seconds = request_timeout_seconds
@@ -291,59 +293,74 @@ class BundleCollector:
         action_candidate_failures: Counter[str] = Counter()
         after_hashes: set[str] = set()
         for candidate_index, action in enumerate(selected):
-            sid = f"branch-{candidate_index}-{uuid.uuid4()}"
-            context, page = self._new_page(
-                sid, branch_initial_state, start_url=branch_start_url
-            )
-            try:
-                branch_start_png = self._settle(page)
-                branch_start_hash = image_metrics(branch_start_png).sha256
-                difference = changed_pixel_fraction(current_png, branch_start_png)
-                if difference > self.maximum_reset_changed_fraction:
-                    raise BundleRejected(
-                        "nonidentical_branch_start",
-                        f"changed_pixel_fraction={difference:.8f}",
-                    )
-
-                execute_action(page, action)
-                page.wait_for_timeout(400)
-                after_png = self._settle(page)
-                after_metrics = image_metrics(after_png)
-                if not is_usable_screen(after_metrics):
-                    action_candidate_failures["after_screen_unusable"] += 1
-                    continue
-                changed = changed_pixel_fraction(current_png, after_png)
-                state_diff = self._state_diff(sid)
-                if changed < self.minimum_changed_fraction and not state_diff:
-                    action_candidate_failures["action_had_no_observable_effect"] += 1
-                    continue
-
-                after_webp = png_to_lossless_webp(after_png)
-                after_sha256 = hashlib.sha256(after_webp).hexdigest()
-                if after_sha256 in after_hashes:
-                    action_candidate_failures["duplicate_branch_future"] += 1
-                    continue
-                after_hashes.add(after_sha256)
-                branch_artifacts.append(
-                    BranchArtifact(
-                        action=action.as_dict(self.viewport_width, self.viewport_height),
-                        element_hint=action.element_hint,
-                        branch_start_render_sha256=branch_start_hash,
-                        branch_start_changed_pixel_fraction=round(difference, 8),
-                        after_webp=after_webp,
-                        after_sha256=after_sha256,
-                        after_render_sha256=after_metrics.sha256,
-                        changed_pixel_fraction=round(changed, 8),
-                        state_diff_paths=tuple(sorted(state_diff.keys())),
-                        state_diff_bytes=len(
-                            json.dumps(state_diff, separators=(",", ":")).encode("utf-8")
-                        ),
-                    )
+            reset_succeeded = False
+            last_reset_difference = 1.0
+            for _ in range(self.maximum_branch_reset_attempts):
+                sid = f"branch-{candidate_index}-{uuid.uuid4()}"
+                context, page = self._new_page(
+                    sid, branch_initial_state, start_url=branch_start_url
                 )
-                if len(branch_artifacts) == self.actions_per_bundle:
+                try:
+                    branch_start_png = self._settle(page)
+                    branch_start_hash = image_metrics(branch_start_png).sha256
+                    difference = changed_pixel_fraction(current_png, branch_start_png)
+                    last_reset_difference = difference
+                    if difference > self.maximum_reset_changed_fraction:
+                        action_candidate_failures["branch_reset_retry"] += 1
+                        continue
+                    reset_succeeded = True
+
+                    execute_action(page, action)
+                    page.wait_for_timeout(400)
+                    after_png = self._settle(page)
+                    after_metrics = image_metrics(after_png)
+                    if not is_usable_screen(after_metrics):
+                        action_candidate_failures["after_screen_unusable"] += 1
+                        break
+                    changed = changed_pixel_fraction(current_png, after_png)
+                    state_diff = self._state_diff(sid)
+                    if changed < self.minimum_changed_fraction and not state_diff:
+                        action_candidate_failures[
+                            "action_had_no_observable_effect"
+                        ] += 1
+                        break
+
+                    after_webp = png_to_lossless_webp(after_png)
+                    after_sha256 = hashlib.sha256(after_webp).hexdigest()
+                    if after_sha256 in after_hashes:
+                        action_candidate_failures["duplicate_branch_future"] += 1
+                        break
+                    after_hashes.add(after_sha256)
+                    branch_artifacts.append(
+                        BranchArtifact(
+                            action=action.as_dict(
+                                self.viewport_width, self.viewport_height
+                            ),
+                            element_hint=action.element_hint,
+                            branch_start_render_sha256=branch_start_hash,
+                            branch_start_changed_pixel_fraction=round(difference, 8),
+                            after_webp=after_webp,
+                            after_sha256=after_sha256,
+                            after_render_sha256=after_metrics.sha256,
+                            changed_pixel_fraction=round(changed, 8),
+                            state_diff_paths=tuple(sorted(state_diff.keys())),
+                            state_diff_bytes=len(
+                                json.dumps(
+                                    state_diff, separators=(",", ":")
+                                ).encode("utf-8")
+                            ),
+                        )
+                    )
                     break
-            finally:
-                context.close()
+                finally:
+                    context.close()
+            if not reset_succeeded:
+                raise BundleRejected(
+                    "nonidentical_branch_start",
+                    f"changed_pixel_fraction={last_reset_difference:.8f}",
+                )
+            if len(branch_artifacts) == self.actions_per_bundle:
+                break
 
         if len(branch_artifacts) != self.actions_per_bundle:
             raise BundleRejected(
