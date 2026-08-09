@@ -57,13 +57,22 @@ def test_outlook_state_is_adapted_to_rendered_mail_schema() -> None:
     assert adapted["user"]["name"] == "Katy Reid"
 
 
-def test_docs_initial_path_uses_state_document_most_of_the_time() -> None:
+def test_docs_variants_are_visible_above_fold() -> None:
     state = {
-        "documents": {"doc-1": {}, "doc-2": {}},
-        "ui": {"currentDocId": "doc-2"},
+        "documents": {
+            "doc-1": {
+                "title": "Long report title V1234",
+                "content": "<h1>Long report body</h1> V5678",
+                "starred": False,
+            }
+        }
     }
-    assert initial_path_for_app("google_docs_mock", state, 11) == "/document/doc-2"
-    assert initial_path_for_app("google_docs_mock", state, 10) == "/"
+    adapted = normalize_state_for_app("google_docs_mock", state)
+    document = adapted["documents"]["doc-1"]
+    assert document["title"].startswith("V1234 ")
+    assert document["content"].startswith("V5678 ")
+    assert document["starred"] is True
+    assert initial_path_for_app("google_docs_mock", adapted, 11) == "/"
 
 
 def test_outlook_initial_path_uses_selected_module() -> None:

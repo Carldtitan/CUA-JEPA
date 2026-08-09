@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -81,6 +82,25 @@ OUTLOOK_FOLDER_ICONS = {
 
 def normalize_state_for_app(app: str, state: dict[str, Any]) -> dict[str, Any]:
     """Adapt task-state schemas to the exact schema rendered by each mock app."""
+    if app == "google_docs_mock":
+        value = copy.deepcopy(state)
+        documents = value.get("documents") or {}
+        if isinstance(documents, dict):
+            for document in documents.values():
+                for key in ("title", "content"):
+                    text = document.get(key)
+                    if not isinstance(text, str):
+                        continue
+                    match = re.search(r" V\d{4}$", text)
+                    if match:
+                        token = match.group().strip()
+                        document[key] = f"{token} {text[:match.start()]}"
+            if documents and not any(
+                document.get("starred") for document in documents.values()
+            ):
+                first_document = documents[sorted(documents)[0]]
+                first_document["starred"] = True
+        return value
     if app != "outlook_web_mock":
         return state
 
@@ -180,17 +200,6 @@ def normalize_state_for_app(app: str, state: dict[str, Any]) -> dict[str, Any]:
 
 def initial_path_for_app(app: str, state: dict[str, Any], seed: int) -> str:
     """Choose a deterministic state-relevant initial view for a mock app."""
-    if app == "google_docs_mock":
-        documents = state.get("documents") or {}
-        if isinstance(documents, dict) and documents and seed % 5:
-            document_ids = sorted(str(document_id) for document_id in documents)
-            requested = str((state.get("ui") or {}).get("currentDocId") or "")
-            document_id = (
-                requested
-                if requested in documents
-                else document_ids[seed % len(document_ids)]
-            )
-            return f"/document/{quote(document_id, safe='')}"
     if app == "outlook_web_mock":
         module = str(state.get("selectedModule") or "mail").lower()
         if module in {"calendar", "people", "tasks"}:
