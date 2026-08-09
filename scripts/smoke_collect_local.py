@@ -8,6 +8,7 @@ from playwright.sync_api import sync_playwright
 
 from cua_jepa.collector import BundleCollector, BundleRejected
 from cua_jepa.config import load_config
+from cua_jepa.state_variants import make_state_variant, normalize_state_for_app
 
 
 def main() -> None:
@@ -51,12 +52,15 @@ def main() -> None:
         artifact = None
         for attempt in range(config.quality.maximum_generation_attempts_per_bundle):
             state_entry = catalog[attempt % len(catalog)]
+            seed = config.seed + args.seed_offset + attempt
             try:
                 artifact = collector.generate(
                     bundle_id=f"local-smoke-{attempt:02d}",
-                    seed=config.seed + args.seed_offset + attempt,
+                    seed=seed,
                     source_task_id=state_entry["source_task_id"],
-                    initial_state=state_entry["state"],
+                    initial_state=normalize_state_for_app(
+                        args.app, make_state_variant(state_entry["state"], seed)
+                    ),
                 )
                 break
             except BundleRejected as exc:

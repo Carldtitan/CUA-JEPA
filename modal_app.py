@@ -172,6 +172,33 @@ def _load_remote_catalog(app_name: str) -> list[dict[str, Any]]:
     return states
 
 
+def _ensure_app_state_compatibility(app_dir: Path, app_name: str) -> None:
+    """Apply small upstream mock fixes required for injected state isolation."""
+    if app_name != "google_docs_mock":
+        return
+    source_path = app_dir / "src" / "store" / "initialData.js"
+    source = source_path.read_text(encoding="utf-8")
+    marker = "For a fresh isolated session, leave storage empty"
+    if marker in source:
+        return
+    old = """    // No saved state: use defaults
+    const data = JSON.parse(JSON.stringify(initialData));
+    localStorage.setItem(sk, JSON.stringify(data));
+    localStorage.setItem(ik, JSON.stringify(data));
+    return data;"""
+    new = """    // For a fresh isolated session, leave storage empty so DocsProvider can
+    // fetch the state that the collector injected through /post?sid=...
+    const data = JSON.parse(JSON.stringify(initialData));
+    if (!sid) {
+      localStorage.setItem(sk, JSON.stringify(data));
+      localStorage.setItem(ik, JSON.stringify(data));
+    }
+    return data;"""
+    if old not in source:
+        raise RuntimeError("Unable to apply Google Docs state-isolation compatibility fix")
+    source_path.write_text(source.replace(old, new), encoding="utf-8")
+
+
 @app.function(
     image=image,
     volumes={REMOTE_DATA_ROOT: volume},
@@ -185,7 +212,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
     from cua_jepa.collector import BundleCollector, BundleRejected
-    from cua_jepa.state_variants import make_state_variant
+    from cua_jepa.state_variants import make_state_variant, normalize_state_for_app
 
     spec = ShardSpec(**spec_value)
     remote_dir = REMOTE_DATA_ROOT / run_id / spec.phase / spec.split / spec.app
@@ -199,6 +226,7 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
         return existing
 
     app_dir = Path("/opt/cua-jepa/apps") / spec.app
+    _ensure_app_state_compatibility(app_dir, spec.app)
     package_name = json.loads(
         (app_dir / "package.json").read_text(encoding="utf-8")
     ).get("name")
@@ -279,7 +307,10 @@ def generate_shard(spec_value: dict[str, Any], run_id: str) -> dict[str, Any]:
                             CONFIG.seed, spec.app, candidate_seed, len(states)
                         )
                         state_entry = states[state_index]
-                        state = make_state_variant(state_entry["state"], candidate_seed)
+                        state = normalize_state_for_app(
+                            spec.app,
+                            make_state_variant(state_entry["state"], candidate_seed),
+                        )
                         bundle_id = (
                             f"{spec.phase}-{spec.split}-{spec.app}-"
                             f"{accepted_index:06d}"
@@ -519,17 +550,25 @@ def main(
     auto_continue: bool = False,
     run_id: str = "",
     local_root: str = "data/synthetic",
+    only_app: str = "",
 ) -> None:
     if phase not in {"pilot", "full"}:
         raise ValueError("phase must be pilot or full")
     if not run_id:
         run_id = datetime.now().strftime("run-%Y%m%d-%H%M%S")
+    if only_app and only_app not in ALL_APPS:
+        raise ValueError(f"Unknown app for --only-app: {only_app}")
+    if phase == "pilot" and only_app:
+        raise ValueError("--only-app is supported only for full replacement runs")
     destination = Path(local_root).resolve()
     started = time.monotonic()
     deadline = started + CONFIG.maximum_runtime_hours * 3600
 
     if phase == "pilot":
-        pilot_results = _run_specs(build_pilot_specs(CONFIG), run_id, destination, deadline)
+        pilot_specs = build_pilot_specs(CONFIG)
+        if only_app:
+            pilot_specs = [spec for spec in pilot_specs if spec.app == only_app]
+        pilot_results = _run_specs(pilot_specs, run_id, destination, deadline)
         passed, gate = _pilot_passes(pilot_results)
         gate_path = destination / run_id / "pilot_gate.json"
         gate_path.write_text(json.dumps({"passed": passed, **gate}, indent=2), encoding="utf-8")
@@ -540,6 +579,12 @@ def main(
             elapsed_hours = (time.monotonic() - started) / 3600
             if elapsed_hours >= CONFIG.maximum_runtime_hours:
                 raise TimeoutError("Runtime limit reached before full generation")
-            _run_specs(build_full_specs(CONFIG), run_id, destination, deadline)
+            full_specs = build_full_specs(CONFIG)
+            if only_app:
+                full_specs = [spec for spec in full_specs if spec.app == only_app]
+            _run_specs(full_specs, run_id, destination, deadline)
     else:
-        _run_specs(build_full_specs(CONFIG), run_id, destination, deadline)
+        full_specs = build_full_specs(CONFIG)
+        if only_app:
+            full_specs = [spec for spec in full_specs if spec.app == only_app]
+        _run_specs(full_specs, run_id, destination, deadline)
