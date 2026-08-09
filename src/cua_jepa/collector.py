@@ -12,7 +12,14 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import requests
 from playwright.sync_api import Browser, BrowserContext, Page, Route
 
-from cua_jepa.actions import Action, choose_distinct_actions, enumerate_actions, execute_action
+from cua_jepa.actions import (
+    Action,
+    action_from_dict,
+    choose_distinct_actions,
+    enumerate_actions,
+    execute_action,
+    typed_text_is_present,
+)
 from cua_jepa.qa import (
     changed_pixel_fraction,
     image_metrics,
@@ -85,9 +92,7 @@ class BundleArtifact:
                     "changed_pixel_fraction": branch.changed_pixel_fraction,
                     "qa": {
                         "element_hint": branch.element_hint,
-                        "branch_start_render_sha256": (
-                            branch.branch_start_render_sha256
-                        ),
+                        "branch_start_render_sha256": (branch.branch_start_render_sha256),
                         "branch_start_changed_pixel_fraction": (
                             branch.branch_start_changed_pixel_fraction
                         ),
@@ -155,9 +160,7 @@ class BundleCollector:
         response.raise_for_status()
 
     def _state_diff(self, sid: str) -> dict[str, Any]:
-        response = self.http.get(
-            self._state_url("go", sid), timeout=self.request_timeout_seconds
-        )
+        response = self.http.get(self._state_url("go", sid), timeout=self.request_timeout_seconds)
         response.raise_for_status()
         value = response.json().get("state_diff")
         return value if isinstance(value, dict) else {}
@@ -302,7 +305,7 @@ class BundleCollector:
                 raise BundleRejected(
                     "base_screen_unusable",
                     f"{current_metrics.width}x{current_metrics.height}:"
-                    f"luminance_stddev={current_metrics.luminance_stddev:.3f}"
+                    f"luminance_stddev={current_metrics.luminance_stddev:.3f}",
                 )
 
             candidates = enumerate_actions(base_page, seed + 1009, bundle_id[-8:])
@@ -350,9 +353,7 @@ class BundleCollector:
                     changed = changed_pixel_fraction(current_png, after_png)
                     state_diff = self._state_diff(sid)
                     if changed < self.minimum_changed_fraction:
-                        action_candidate_failures[
-                            "action_had_no_observable_effect"
-                        ] += 1
+                        action_candidate_failures["action_had_no_observable_effect"] += 1
                         break
                     if changed > self.maximum_changed_fraction:
                         action_candidate_failures["action_changed_too_much"] += 1
@@ -366,9 +367,7 @@ class BundleCollector:
                     after_hashes.add(after_sha256)
                     branch_artifacts.append(
                         BranchArtifact(
-                            action=action.as_dict(
-                                self.viewport_width, self.viewport_height
-                            ),
+                            action=action.as_dict(self.viewport_width, self.viewport_height),
                             element_hint=action.element_hint,
                             branch_start_render_sha256=branch_start_hash,
                             branch_start_changed_pixel_fraction=round(difference, 8),
@@ -378,9 +377,7 @@ class BundleCollector:
                             changed_pixel_fraction=round(changed, 8),
                             state_diff_paths=tuple(sorted(state_diff.keys())),
                             state_diff_bytes=len(
-                                json.dumps(
-                                    state_diff, separators=(",", ":")
-                                ).encode("utf-8")
+                                json.dumps(state_diff, separators=(",", ":")).encode("utf-8")
                             ),
                         )
                     )
@@ -418,6 +415,140 @@ class BundleCollector:
             branches=tuple(branch_artifacts),
         )
 
+    def regenerate_type_branch(
+        self,
+        record: dict[str, Any],
+        initial_state: dict[str, Any],
+        branch_index: int,
+        text_for_hint: Callable[[str | None], str],
+        stored_current_webp: bytes,
+    ) -> BranchArtifact:
+        """Replay one stored bundle and replace only one typing branch."""
+        stored_branch = record["branches"][branch_index]
+        if stored_branch["action"].get("kind") != "type":
+            raise ValueError(f"Branch {branch_index} is not a typing action")
+        seed = int(record["seed"])
+        replay_tolerance = max(self.maximum_reset_changed_fraction, 0.0001)
+        base_sid = f"typing-base-{uuid.uuid4()}"
+        initial_path = initial_path_for_app(self.app, initial_state, seed)
+        base_context, base_page = self._new_page(
+            base_sid,
+            initial_state,
+            start_url=f"{self.base_url}{initial_path}",
+            render_seed=seed,
+        )
+        try:
+            for stored_warmup in record.get("warmup_actions", []):
+                execute_action(base_page, action_from_dict(stored_warmup))
+                base_page.wait_for_timeout(350)
+                self._settle(base_page)
+            current_png = self._settle(base_page)
+            current_webp = png_to_lossless_webp(current_png)
+            current_sha = hashlib.sha256(current_webp).hexdigest()
+            if current_sha != record["current_sha256"]:
+                replay_difference = changed_pixel_fraction(stored_current_webp, current_png)
+                if replay_difference > replay_tolerance:
+                    raise BundleRejected(
+                        "stored_current_replay_mismatch",
+                        f"changed_pixel_fraction={replay_difference:.8f};"
+                        f"{current_sha} != {record['current_sha256']}",
+                    )
+            branch_initial_state = self._current_state(base_sid)
+            branch_start_url = base_page.url
+            typing_targets = [
+                candidate
+                for candidate in enumerate_actions(
+                    base_page,
+                    seed + 8191 + branch_index,
+                    record["bundle_id"][-8:],
+                )
+                if candidate.kind == "type"
+            ]
+            if not typing_targets:
+                raise BundleRejected("no_unobscured_typing_target")
+        finally:
+            base_context.close()
+
+        last_reset_difference = 1.0
+        last_candidate_failure = "no_candidate_attempted"
+        maximum_attempts = max(self.maximum_branch_reset_attempts, len(typing_targets))
+        for attempt in range(maximum_attempts):
+            target = typing_targets[attempt % len(typing_targets)]
+            action = Action(
+                kind="type",
+                x=target.x,
+                y=target.y,
+                text=text_for_hint(target.element_hint),
+                element_hint=target.element_hint,
+            )
+            sid = f"typing-{branch_index}-{attempt}-{uuid.uuid4()}"
+            context, page = self._new_page(
+                sid,
+                branch_initial_state,
+                start_url=branch_start_url,
+                render_seed=seed,
+            )
+            try:
+                branch_start_png = self._settle(page)
+                branch_start_metrics = image_metrics(branch_start_png)
+                difference = changed_pixel_fraction(stored_current_webp, branch_start_png)
+                last_reset_difference = difference
+                if difference > replay_tolerance:
+                    last_candidate_failure = f"reset_changed_pixel_fraction={difference:.8f}"
+                    continue
+                execute_action(page, action)
+                if not typed_text_is_present(page, action.text or ""):
+                    last_candidate_failure = "typed_text_not_present_immediately"
+                    continue
+                page.wait_for_timeout(400)
+                after_png = self._settle(page)
+                if not typed_text_is_present(page, action.text or ""):
+                    last_candidate_failure = "typed_text_not_present_after_settle"
+                    continue
+                after_metrics = image_metrics(after_png)
+                if not is_usable_screen(after_metrics):
+                    last_candidate_failure = "typing_after_screen_unusable"
+                    continue
+                changed = changed_pixel_fraction(stored_current_webp, after_png)
+                if changed < self.minimum_changed_fraction:
+                    last_candidate_failure = f"changed_pixel_fraction_too_low={changed:.8f}"
+                    continue
+                if changed > self.maximum_changed_fraction:
+                    last_candidate_failure = f"changed_pixel_fraction_too_high={changed:.8f}"
+                    continue
+                after_webp = png_to_lossless_webp(after_png)
+                after_sha = hashlib.sha256(after_webp).hexdigest()
+                other_hashes = {
+                    branch["after_sha256"]
+                    for index, branch in enumerate(record["branches"])
+                    if index != branch_index
+                }
+                if after_sha in other_hashes:
+                    last_candidate_failure = "typing_duplicate_branch_future"
+                    continue
+                state_diff = self._state_diff(sid)
+                return BranchArtifact(
+                    action=action.as_dict(self.viewport_width, self.viewport_height),
+                    element_hint=action.element_hint,
+                    branch_start_render_sha256=branch_start_metrics.sha256,
+                    branch_start_changed_pixel_fraction=round(difference, 8),
+                    after_webp=after_webp,
+                    after_sha256=after_sha,
+                    after_render_sha256=after_metrics.sha256,
+                    changed_pixel_fraction=round(changed, 8),
+                    state_diff_paths=tuple(sorted(state_diff.keys())),
+                    state_diff_bytes=len(
+                        json.dumps(state_diff, separators=(",", ":")).encode("utf-8")
+                    ),
+                )
+            finally:
+                context.close()
+        raise BundleRejected(
+            "typing_regeneration_attempts_exhausted",
+            f"last_reset_changed_pixel_fraction={last_reset_difference:.8f};"
+            f"last_candidate_failure={last_candidate_failure}",
+        )
+
 
 def with_attempts(
     operation: Callable[[int], BundleArtifact], maximum_attempts: int
@@ -428,6 +559,4 @@ def with_attempts(
             return operation(attempt), failures
         except BundleRejected as exc:
             failures.append(str(exc))
-    raise BundleRejected(
-        "maximum_attempts_exhausted", json.dumps({"attempt_failures": failures})
-    )
+    raise BundleRejected("maximum_attempts_exhausted", json.dumps({"attempt_failures": failures}))

@@ -68,6 +68,7 @@ def audit(
     *,
     allow_filtered_counts: bool = False,
     require_unique_current: bool = False,
+    maximum_reset_changed_fraction: float = 0.00005,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -154,7 +155,9 @@ def audit(
                 errors.append(f"missing embedded manifest: {relative}")
                 continue
             embedded = json.load(archive.extractfile(embedded_member))
-            comparable = {key: value for key, value in manifest.items() if key not in {"sha256", "bytes"}}
+            comparable = {
+                key: value for key, value in manifest.items() if key not in {"sha256", "bytes"}
+            }
             if embedded != comparable:
                 errors.append(f"embedded/sidecar manifest mismatch: {relative}")
 
@@ -192,7 +195,9 @@ def audit(
                 try:
                     with Image.open(io.BytesIO(current_bytes)) as image:
                         if image.format != "WEBP" or image.size != (1280, 720):
-                            errors.append(f"invalid current image: {bundle_id} {image.format} {image.size}")
+                            errors.append(
+                                f"invalid current image: {bundle_id} {image.format} {image.size}"
+                            )
                         image.verify()
                 except Exception as exc:
                     errors.append(f"unreadable current image: {bundle_id}: {exc}")
@@ -234,11 +239,20 @@ def audit(
                     fraction = branch.get("changed_pixel_fraction")
                     reset_fraction = branch.get("qa", {}).get("branch_start_changed_pixel_fraction")
                     if not (0.0001 <= fraction <= 0.95):
-                        errors.append(f"changed fraction out of bounds: {bundle_id}/{index}: {fraction}")
-                    if not (0 <= reset_fraction <= 0.00005):
-                        errors.append(f"reset fraction out of bounds: {bundle_id}/{index}: {reset_fraction}")
-                    if branch.get("qa", {}).get("branch_start_render_sha256") != render_sha and reset_fraction == 0:
-                        errors.append(f"reset hash mismatch without pixel drift: {bundle_id}/{index}")
+                        errors.append(
+                            f"changed fraction out of bounds: {bundle_id}/{index}: {fraction}"
+                        )
+                    if not (0 <= reset_fraction <= maximum_reset_changed_fraction):
+                        errors.append(
+                            f"reset fraction out of bounds: {bundle_id}/{index}: {reset_fraction}"
+                        )
+                    if (
+                        branch.get("qa", {}).get("branch_start_render_sha256") != render_sha
+                        and reset_fraction == 0
+                    ):
+                        errors.append(
+                            f"reset hash mismatch without pixel drift: {bundle_id}/{index}"
+                        )
                     changed_fractions.append(fraction)
                     reset_fractions.append(reset_fraction)
                     app_changed_fractions[app].append(fraction)
@@ -263,7 +277,9 @@ def audit(
                     try:
                         with Image.open(io.BytesIO(after_bytes)) as image:
                             if image.format != "WEBP" or image.size != (1280, 720):
-                                errors.append(f"invalid after image: {bundle_id}/{index} {image.format} {image.size}")
+                                errors.append(
+                                    f"invalid after image: {bundle_id}/{index} {image.format} {image.size}"
+                                )
                             image.verify()
                     except Exception as exc:
                         errors.append(f"unreadable after image: {bundle_id}/{index}: {exc}")
@@ -305,13 +321,17 @@ def audit(
     for left, right in split_pairs:
         leakage[f"{left}__{right}"] = {
             "current_webp_hash_overlap": len(current_hashes[left] & current_hashes[right]),
-            "current_render_hash_overlap": len(current_render_hashes[left] & current_render_hashes[right]),
+            "current_render_hash_overlap": len(
+                current_render_hashes[left] & current_render_hashes[right]
+            ),
             "after_webp_hash_overlap": len(after_hashes[left] & after_hashes[right]),
         }
     if any(value for pair in leakage.values() for value in pair.values()):
         errors.append(f"exact screenshot leakage between splits: {leakage}")
 
-    duplicate_current_images = sum(count - 1 for count in all_current_hash_counts.values() if count > 1)
+    duplicate_current_images = sum(
+        count - 1 for count in all_current_hash_counts.values() if count > 1
+    )
     duplicate_after_images = sum(count - 1 for count in all_after_hash_counts.values() if count > 1)
     if duplicate_current_images:
         message = f"{duplicate_current_images} duplicate current screenshots within splits"
@@ -324,7 +344,9 @@ def audit(
     for app in sorted(app_action_kinds):
         fractions = app_changed_fractions[app]
         per_app[app] = {
-            "bundles": sum(count for (split, name), count in split_app_bundles.items() if name == app),
+            "bundles": sum(
+                count for (split, name), count in split_app_bundles.items() if name == app
+            ),
             "transitions": sum(app_action_kinds[app].values()),
             "action_kinds": dict(app_action_kinds[app]),
             "generation_attempts": app_generation_attempts[app],
@@ -385,6 +407,7 @@ def audit(
             "p95": percentile(reset_fractions, 0.95),
             "max": max(reset_fractions, default=0),
             "nonzero": sum(value > 0 for value in reset_fractions),
+            "accepted_maximum": maximum_reset_changed_fraction,
         },
         "split_leakage": leakage,
         "per_app": per_app,
@@ -399,11 +422,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--allow-filtered-counts", action="store_true")
     parser.add_argument("--require-unique-current", action="store_true")
+    parser.add_argument("--maximum-reset-changed-fraction", type=float, default=0.00005)
     args = parser.parse_args()
     report = audit(
         args.root,
         allow_filtered_counts=args.allow_filtered_counts,
         require_unique_current=args.require_unique_current,
+        maximum_reset_changed_fraction=args.maximum_reset_changed_fraction,
     )
     serialized = json.dumps(report, indent=2)
     if args.output:

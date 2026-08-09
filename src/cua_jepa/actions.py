@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -30,6 +31,99 @@ class Action:
             result["x_normalized"] = round(self.x / viewport_width, 6)
             result["y_normalized"] = round(self.y / viewport_height, 6)
         return {key: value for key, value in result.items() if value is not None}
+
+
+def action_from_dict(value: dict[str, Any]) -> Action:
+    """Recreate an action while ignoring derived serialized fields."""
+    fields = {
+        "kind",
+        "x",
+        "y",
+        "text",
+        "key",
+        "delta_x",
+        "delta_y",
+        "element_hint",
+        "warmup_safe",
+    }
+    return Action(**{key: item for key, item in value.items() if key in fields})
+
+
+def varied_type_text(
+    app: str,
+    element_hint: str | None,
+    seed: int,
+    bundle_id: str,
+    branch_index: int,
+) -> str:
+    """Produce deterministic, field-appropriate text with varied lengths."""
+    digest = hashlib.sha256(
+        f"{app}:{element_hint}:{seed}:{bundle_id}:{branch_index}".encode("utf-8")
+    ).digest()
+    number = int.from_bytes(digest[:4], "big") % 10_000
+    hint = (element_hint or "").lower()
+
+    if "formula" in hint:
+        values = (
+            f"=SUM(B2:B{2 + number % 18})",
+            f"=AVERAGE(C2:C{3 + number % 15})",
+            f"=B{2 + number % 20}*1.15",
+            f'=COUNTIF(A:A,"open-{number % 90}")',
+        )
+    elif "email" in hint or "@" in hint or "recipient" in hint:
+        values = (
+            f"maya.chen{number % 100}@example.com",
+            f"ops-{number % 1000}@example.org",
+            f"founder{number % 500}@startup.test",
+        )
+    elif "url" in hint or "website" in hint:
+        values = (
+            f"https://example.com/brief-{number}",
+            f"https://docs.example.org/q{1 + number % 4}",
+            f"https://status.example.net/{number % 1000}",
+        )
+    elif "phone" in hint or "mobile" in hint or "tel" in hint:
+        values = (
+            f"415555{number % 10_000:04d}",
+            f"+1202555{number % 10_000:04d}",
+        )
+    elif "search" in hint or "filter" in hint:
+        values = (
+            f"AI {number % 90}",
+            f"invoice {number:04d}",
+            f"Maya Chen {number % 100}",
+            f"urgent customer issue {number % 500}",
+            f"Q{1 + number % 4} roadmap review",
+            f"open pull requests {number % 200}",
+            f"SKU-{number:04d}",
+        )
+    elif any(
+        word in hint for word in ("comment", "message", "description", "reply", "note", "body")
+    ):
+        values = (
+            f"Please review item {number}.",
+            f"The customer confirmed the update for ticket {number}.",
+            f"Follow up with the design team before Friday ({number % 100}).",
+            f"Blocked on approval {number}; the remaining work is ready.",
+        )
+    elif any(
+        word in hint for word in ("name", "title", "subject", "company", "product", "project")
+    ):
+        values = (
+            f"Atlas {number}",
+            f"Northstar Planning {number % 1000}",
+            f"Q{1 + number % 4} Launch Review",
+            f"Customer Renewal {number}",
+        )
+    else:
+        values = (
+            f"Review {number}",
+            f"Ready for approval {number % 1000}",
+            f"Priority {1 + number % 5}",
+            f"Planning note {number}: confirm the next step.",
+            f"Maya Chen {number % 100}",
+        )
+    return values[digest[4] % len(values)]
 
 
 ENUMERATE_SCRIPT = r"""
@@ -84,10 +178,14 @@ ENUMERATE_SCRIPT = r"""
   for (const el of document.querySelectorAll(typeSelector)) {
     if (!visible(el) || el.readOnly) continue;
     const r = el.getBoundingClientRect();
+    const centerX = Math.max(1, Math.min(innerWidth - 2, r.left + r.width / 2));
+    const centerY = Math.max(1, Math.min(innerHeight - 2, r.top + r.height / 2));
+    const hit = document.elementFromPoint(centerX, centerY);
+    if (!hit || (hit !== el && !el.contains(hit))) continue;
     typeTargets.push({
       kind: 'type',
-      x: Math.max(1, Math.min(innerWidth - 2, r.left + r.width / 2)),
-      y: Math.max(1, Math.min(innerHeight - 2, r.top + r.height / 2)),
+      x: centerX,
+      y: centerY,
       element_hint: hint(el)
     });
     if (typeTargets.length >= 6) break;
@@ -195,3 +293,24 @@ def execute_action(page: Page, action: Action) -> None:
         page.keyboard.press(action.key or "Enter")
     else:
         raise ValueError(f"Unsupported action kind: {action.kind}")
+
+
+def typed_text_is_present(page: Page, expected: str) -> bool:
+    """Confirm that typing changed an editable field, not document selection."""
+    return bool(
+        page.evaluate(
+            """
+            expected => {
+              const selector = [
+                'input:not([type="hidden"])', 'textarea', '[contenteditable="true"]'
+              ].join(',');
+              for (const el of document.querySelectorAll(selector)) {
+                const value = el.isContentEditable ? el.innerText : el.value;
+                if (typeof value === 'string' && value.includes(expected)) return true;
+              }
+              return false;
+            }
+            """,
+            expected,
+        )
+    )
