@@ -1,4 +1,8 @@
-from cua_jepa.state_variants import make_state_variant, normalize_state_for_app
+from cua_jepa.state_variants import (
+    initial_path_for_app,
+    make_state_variant,
+    normalize_state_for_app,
+)
 
 
 def test_variant_changes_visible_text_but_preserves_references() -> None:
@@ -51,4 +55,30 @@ def test_outlook_state_is_adapted_to_rendered_mail_schema() -> None:
     assert adapted["emails"][0]["folderId"] == "inbox"
     assert adapted["emails"][0]["body"] == "Review this"
     assert adapted["user"]["name"] == "Katy Reid"
+
+
+def test_docs_initial_path_uses_state_document_most_of_the_time() -> None:
+    state = {
+        "documents": {"doc-1": {}, "doc-2": {}},
+        "ui": {"currentDocId": "doc-2"},
+    }
+    assert initial_path_for_app("google_docs_mock", state, 11) == "/document/doc-2"
+    assert initial_path_for_app("google_docs_mock", state, 10) == "/"
+
+
+def test_outlook_initial_path_uses_selected_module() -> None:
+    assert (
+        initial_path_for_app(
+            "outlook_web_mock", {"selectedModule": "calendar"}, 1
+        )
+        == "/calendar"
+    )
+    assert (
+        initial_path_for_app(
+            "outlook_web_mock",
+            {"selectedModule": "mail", "selectedFolderId": "drafts"},
+            1,
+        )
+        == "/mail/drafts"
+    )
 

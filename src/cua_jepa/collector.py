@@ -20,6 +20,7 @@ from cua_jepa.qa import (
     png_to_lossless_webp,
     stable_screenshot,
 )
+from cua_jepa.state_variants import initial_path_for_app
 
 
 STABILITY_CSS = """
@@ -286,8 +287,12 @@ class BundleCollector:
         initial_state: dict[str, Any],
     ) -> BundleArtifact:
         base_sid = f"base-{uuid.uuid4()}"
+        initial_path = initial_path_for_app(self.app, initial_state, seed)
         base_context, base_page = self._new_page(
-            base_sid, initial_state, render_seed=seed
+            base_sid,
+            initial_state,
+            start_url=f"{self.base_url}{initial_path}",
+            render_seed=seed,
         )
         try:
             warmups = self._choose_warmups(base_page, seed) if self.allow_warmups else []

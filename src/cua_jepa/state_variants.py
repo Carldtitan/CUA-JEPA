@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 from typing import Any
+from urllib.parse import quote
 
 
 VISIBLE_TEXT_KEYS = {
@@ -168,7 +169,33 @@ def normalize_state_for_app(app: str, state: dict[str, Any]) -> dict[str, Any]:
             "messages": normalized_messages,
             "emails": normalized_emails,
             "contacts": contacts,
+            "selectedFolderId": folder_id_map.get(
+                str(value.get("selectedFolderId", "")),
+                value.get("selectedFolderId") or "inbox",
+            ),
         }
     )
     return value
+
+
+def initial_path_for_app(app: str, state: dict[str, Any], seed: int) -> str:
+    """Choose a deterministic state-relevant initial view for a mock app."""
+    if app == "google_docs_mock":
+        documents = state.get("documents") or {}
+        if isinstance(documents, dict) and documents and seed % 5:
+            document_ids = sorted(str(document_id) for document_id in documents)
+            requested = str((state.get("ui") or {}).get("currentDocId") or "")
+            document_id = (
+                requested
+                if requested in documents
+                else document_ids[seed % len(document_ids)]
+            )
+            return f"/document/{quote(document_id, safe='')}"
+    if app == "outlook_web_mock":
+        module = str(state.get("selectedModule") or "mail").lower()
+        if module in {"calendar", "people", "tasks"}:
+            return f"/{module}"
+        folder_id = str(state.get("selectedFolderId") or "inbox")
+        return f"/mail/{quote(folder_id, safe='')}"
+    return "/"
 

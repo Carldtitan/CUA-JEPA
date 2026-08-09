@@ -551,6 +551,7 @@ def main(
     run_id: str = "",
     local_root: str = "data/synthetic",
     only_app: str = "",
+    shard_limit: int = 0,
 ) -> None:
     if phase not in {"pilot", "full"}:
         raise ValueError("phase must be pilot or full")
@@ -560,6 +561,8 @@ def main(
         raise ValueError(f"Unknown app for --only-app: {only_app}")
     if phase == "pilot" and only_app:
         raise ValueError("--only-app is supported only for full replacement runs")
+    if shard_limit < 0 or (shard_limit and not only_app):
+        raise ValueError("--shard-limit must be nonnegative and requires --only-app")
     destination = Path(local_root).resolve()
     started = time.monotonic()
     deadline = started + CONFIG.maximum_runtime_hours * 3600
@@ -587,4 +590,6 @@ def main(
         full_specs = build_full_specs(CONFIG)
         if only_app:
             full_specs = [spec for spec in full_specs if spec.app == only_app]
+        if shard_limit:
+            full_specs = full_specs[:shard_limit]
         _run_specs(full_specs, run_id, destination, deadline)
