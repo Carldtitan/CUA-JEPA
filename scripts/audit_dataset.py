@@ -63,7 +63,12 @@ def action_signature(action: dict[str, Any]) -> str:
     return json.dumps(action, sort_keys=True, separators=(",", ":"))
 
 
-def audit(root: Path) -> dict[str, Any]:
+def audit(
+    root: Path,
+    *,
+    allow_filtered_counts: bool = False,
+    require_unique_current: bool = False,
+) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     shard_paths = sorted(root.rglob("*.tar"))
@@ -276,12 +281,21 @@ def audit(root: Path) -> dict[str, Any]:
         for split, apps in EXPECTED_SPLITS.items()
         for app, count in apps.items()
     }
-    if dict(split_app_bundles) != expected_pairs:
+    if allow_filtered_counts:
+        if set(split_app_bundles) != set(expected_pairs):
+            errors.append(f"split/app coverage mismatch: {dict(split_app_bundles)}")
+        for pair, count in split_app_bundles.items():
+            if not 0 < count <= expected_pairs[pair]:
+                errors.append(f"invalid filtered bundle count: {pair}={count}")
+    elif dict(split_app_bundles) != expected_pairs:
         errors.append(f"split/app bundle spread mismatch: {dict(split_app_bundles)}")
     expected_shards = {pair: count // 25 for pair, count in expected_pairs.items()}
     if dict(split_app_shards) != expected_shards:
         errors.append(f"split/app shard spread mismatch: {dict(split_app_shards)}")
-    if bundles != 9000 or transitions != 36000 or image_count != 45000:
+    if allow_filtered_counts:
+        if transitions != bundles * 4 or image_count != bundles * 5:
+            errors.append(f"wrong filtered counts: {bundles=} {transitions=} {image_count=}")
+    elif bundles != 9000 or transitions != 36000 or image_count != 45000:
         errors.append(f"wrong global counts: {bundles=} {transitions=} {image_count=}")
     if set(action_kinds) != {"click", "scroll", "type"}:
         errors.append(f"missing action kind: {dict(action_kinds)}")
@@ -300,7 +314,11 @@ def audit(root: Path) -> dict[str, Any]:
     duplicate_current_images = sum(count - 1 for count in all_current_hash_counts.values() if count > 1)
     duplicate_after_images = sum(count - 1 for count in all_after_hash_counts.values() if count > 1)
     if duplicate_current_images:
-        warnings.append(f"{duplicate_current_images} duplicate current screenshots within splits")
+        message = f"{duplicate_current_images} duplicate current screenshots within splits"
+        if require_unique_current:
+            errors.append(message)
+        else:
+            warnings.append(message)
 
     per_app = {}
     for app in sorted(app_action_kinds):
@@ -379,8 +397,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Deeply audit a CUA-JEPA synthetic dataset")
     parser.add_argument("root", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--allow-filtered-counts", action="store_true")
+    parser.add_argument("--require-unique-current", action="store_true")
     args = parser.parse_args()
-    report = audit(args.root)
+    report = audit(
+        args.root,
+        allow_filtered_counts=args.allow_filtered_counts,
+        require_unique_current=args.require_unique_current,
+    )
     serialized = json.dumps(report, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

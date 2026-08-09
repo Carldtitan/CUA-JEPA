@@ -5,14 +5,14 @@
 The final dataset is:
 
 ```text
-data/synthetic/clean-20260808-v4/full
+data/synthetic/clean-20260808-v5/full
 ```
 
 Its machine-readable audit and provenance files are:
 
 ```text
-data/synthetic/clean-20260808-v4/audit_report.json
-data/synthetic/clean-20260808-v4/assembly_manifest.json
+data/synthetic/clean-20260808-v5/audit_report.json
+data/synthetic/clean-20260808-v5/deduplication_manifest.json
 ```
 
 Generated data is intentionally excluded from Git. The code that generates, assembles, and audits it is committed.
@@ -30,26 +30,26 @@ The data does not require a human to label the correct next screen. The next scr
 | Split | App | Bundles | Transitions |
 |---|---|---:|---:|
 | Train | Gmail | 1,000 | 4,000 |
-| Train | Google Docs | 1,000 | 4,000 |
-| Train | Google Sheets | 1,000 | 4,000 |
+| Train | Google Docs | 942 | 3,768 |
+| Train | Google Sheets | 840 | 3,360 |
 | Train | GitLab | 1,000 | 4,000 |
-| Train | Shopify Admin | 1,000 | 4,000 |
-| Train | Salesforce | 1,000 | 4,000 |
+| Train | Shopify Admin | 998 | 3,992 |
+| Train | Salesforce | 887 | 3,548 |
 | Train | GitHub | 1,000 | 4,000 |
 | Train | Stripe Dashboard | 1,000 | 4,000 |
 | Validation | Slack | 250 | 1,000 |
 | Validation | Jira | 250 | 1,000 |
-| Test | Outlook Web | 250 | 1,000 |
+| Test | Outlook Web | 194 | 776 |
 | Test | Trello | 250 | 1,000 |
 
 Totals:
 
-- 9,000 same-state bundles;
-- 36,000 action transitions;
-- 45,000 lossless WebP screenshots at 1280 x 720;
-- 387 source GUI states across 12 mock applications;
-- 23,320 clicks, 8,542 type actions, and 4,138 scroll actions;
-- approximately 1.35 GiB of tar data.
+- 8,611 same-state bundles with unique starting screenshots;
+- 34,444 action transitions;
+- 43,055 lossless WebP screenshots at 1280 x 720;
+- 381 retained source GUI states across 12 mock applications;
+- 22,418 clicks, 8,231 type actions, and 3,795 scroll actions;
+- approximately 1.31 GiB of tar data.
 
 The validation and test applications do not appear in training. Exact current-screen, rendered-screen, and after-screen hash overlap between every pair of splits is zero.
 
@@ -68,7 +68,7 @@ AgentNet was not used.
 
 ## File format
 
-Each tar shard contains 25 bundles and one embedded `manifest.json`. Each bundle directory contains:
+Each tar shard contains up to 25 retained bundles and one embedded `manifest.json`. Each bundle directory contains:
 
 ```text
 <bundle_id>/current.webp
@@ -116,26 +116,26 @@ The held-out same-state bundles can also support a four-way dynamics test: given
 The exhaustive auditor opened every tar and every image and checked every action and checksum.
 
 - 360/360 shards passed;
-- 9,000/9,000 bundles passed;
-- 36,000/36,000 transitions passed;
-- 45,000/45,000 images were valid 1280 x 720 WebP files;
-- 8,611 of 9,000 current screenshots were unique (95.7 percent);
+- 8,611/8,611 bundles passed;
+- 34,444/34,444 transitions passed;
+- 43,055/43,055 images were valid 1280 x 720 WebP files;
+- all 8,611 current screenshots were unique;
 - no exact screenshot leakage occurred between train, validation, and test;
 - no bundle contained duplicate actions;
 - no bundle contained duplicate resulting screens;
-- collection acceptance was 99.7 percent (9,000 accepted from 9,027 attempts);
 - changed-pixel fractions ranged from 0.0001454 to 0.94993273;
 - maximum reset drift was 0.00004883, below the 0.00005 limit.
 
-There are 389 repeated current screenshots within their own splits. They are reported, not hidden. They are concentrated in a few mock applications whose different underlying states can render the same visible view. No repeated current screenshot crosses a split, and every four-action bundle has distinct actions and distinct futures.
+The deduplication pass removed 389 bundles whose starting screenshot exactly matched an earlier retained bundle. Consequently, no exact input-action pair is repeated and no identical input-action pair has conflicting future targets. The original v4 data remains locally available as a recoverable pre-filter backup.
 
 Run the audit again with:
 
 ```powershell
-python scripts/audit_dataset.py data/synthetic/clean-20260808-v4/full `
-  --output data/synthetic/clean-20260808-v4/audit_report.json
+python scripts/audit_dataset.py data/synthetic/clean-20260808-v5/full `
+  --allow-filtered-counts --require-unique-current `
+  --output data/synthetic/clean-20260808-v5/audit_report.json
 ```
 
 ## Limits on what this proves
 
-These are deterministic mock applications, not live websites. Synthetic text variants and mock state logic are useful for a controlled MVP but do not establish performance on real browser tasks. The dataset can test whether action-conditioned dynamics are learned; only the controlled four-model experiment can show whether that learning improves downstream computer use, accuracy, data efficiency, or inference cost.
+These are deterministic mock applications, not live websites. Synthetic text variants and mock state logic are useful for a controlled MVP but do not establish performance on real browser tasks. The current typing branches all use the same fixed-length synthetic text pattern and mostly target search fields, so they do not support a claim about broad typing behavior. The dataset can test whether action-conditioned dynamics are learned; only the controlled four-model experiment can show whether that learning improves downstream computer use, accuracy, data efficiency, or inference cost.
