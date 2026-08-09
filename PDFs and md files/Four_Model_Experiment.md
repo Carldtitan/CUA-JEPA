@@ -80,6 +80,32 @@ The `NO_ACTION` representation must be fixed and identical for every Model 3 tra
 | Model 3 | No | Yes | Yes |
 | Model 4 | Yes | No | Yes |
 
+## Exact data assignment for the MVP
+
+### JEPA pretraining data
+
+Use the custom same-state synthetic dataset, not AgentNet:
+
+```text
+data/synthetic/clean-20260808-v7/full
+```
+
+| Use | Apps | Bundles | Transitions |
+|---|---:|---:|---:|
+| Pretraining | 8 train apps | 7,667 | 30,668 |
+| Early stopping/model selection | Jira and Slack | 500 | 2,000 |
+| Final held-out dynamics test | Outlook and Trello | 444 | 1,776 |
+
+Model 4 receives each training transition as `current screen + correct action -> future screen`. Model 3 receives the exact same transitions in the exact same order, but every action is replaced with `NO_ACTION`. Models 1 and 2 receive none of this data. Validation and test transitions must never be used for gradient updates.
+
+### SFT data
+
+Use a separate 2,000-example subset of AgentNet for SFT, plus 250 validation examples from disjoint task IDs. This subset has not yet been downloaded or prepared locally. Keep only examples from completed, high-quality trajectories whose individual step is marked correct and not redundant. Limit the number of steps taken from any one task and balance operating systems, domains, and action types.
+
+Format each SFT example as `task instruction + current screenshot + short action history -> next normalized action`. Use action-and-code targets only; do not train on AgentNet's synthesized thoughts as if they were ground truth. Models 2, 3, and 4 must receive the exact same 2,000 training examples, validation examples, ordering, and SFT settings. Model 1 receives no SFT.
+
+The custom branch data must not be used as SFT data: its actions were sampled to expose different consequences, not selected because they advance a user task. AgentNet is unsuitable for the controlled JEPA pretraining comparison because it normally shows only the demonstrated action from a state, but that is not a problem for SFT, where the demonstrated action is precisely the target label.
+
 ## Direct dynamics check
 
 Before downstream SFT results are interpreted, Models 3 and 4 should be tested on held-out same-state bundles:

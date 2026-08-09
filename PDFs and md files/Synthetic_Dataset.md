@@ -5,14 +5,15 @@
 The final dataset is:
 
 ```text
-data/synthetic/clean-20260808-v5/full
+data/synthetic/clean-20260808-v7/full
 ```
 
 Its machine-readable audit and provenance files are:
 
 ```text
-data/synthetic/clean-20260808-v5/audit_report.json
-data/synthetic/clean-20260808-v5/deduplication_manifest.json
+data/synthetic/clean-20260808-v7/audit_report.json
+data/synthetic/clean-20260808-v7/typing_regeneration_manifest.json
+data/synthetic/clean-20260808-v7/typing_verification.json
 ```
 
 Generated data is intentionally excluded from Git. The code that generates, assembles, and audits it is committed.
@@ -62,7 +63,8 @@ The validation and test applications do not appear in training. Exact current-sc
 5. Time and browser randomness were fixed for reproducibility.
 6. For every bundle, the app was reset to one state, four distinct actions were selected, and each action ran in a fresh branch from that same state.
 7. A branch was kept only if its starting screen matched within the reset tolerance and its action produced a visible change inside the minimum and maximum pixel bounds.
-8. Each shard was committed to a persistent Modal volume, downloaded locally, and verified using SHA-256.
+8. All 8,231 typing branches were replayed independently. Fixed synthetic strings were replaced with deterministic, field-aware text. A typing branch was accepted only when the target was unobscured, the new text remained in a real editable field after the page settled, and the resulting screenshot visibly changed. This retargeted 643 typing actions whose original field was covered or unsuitable.
+9. Each shard was committed to a persistent Modal volume, downloaded locally, and verified using SHA-256.
 
 AgentNet was not used.
 
@@ -92,7 +94,7 @@ Actions use these forms:
 
 ```json
 {"kind":"click","x":640,"y":360,"x_normalized":0.5,"y_normalized":0.5}
-{"kind":"type","x":500,"y":40,"text":"Synthetic ...","x_normalized":0.390625,"y_normalized":0.055556}
+{"kind":"type","x":500,"y":40,"text":"urgent customer issue 489","x_normalized":0.390625,"y_normalized":0.055556}
 {"kind":"scroll","delta_y":576}
 ```
 
@@ -124,18 +126,33 @@ The exhaustive auditor opened every tar and every image and checked every action
 - no bundle contained duplicate actions;
 - no bundle contained duplicate resulting screens;
 - changed-pixel fractions ranged from 0.0001454 to 0.94993273;
-- maximum reset drift was 0.00004883, below the 0.00005 limit.
+- maximum reset drift was 0.0000944, below the 0.0001 replay limit.
+
+The typing-only comparison also confirmed:
+
+- all 8,231 typing actions and future screenshots were replaced;
+- all 8,231 new typing futures differ from their old fixed-text futures;
+- all 8,611 current screenshots are byte-for-byte unchanged;
+- all 26,213 click and scroll branches are byte-for-byte unchanged;
+- the new typing text contains 3,314 distinct strings, spans 25 distinct lengths from 4 to 54 characters, and never uses the old `Synthetic ...` prefix;
+- the text is field-aware: 7,556 search/filter phrases, 297 formulas, 41 email addresses, 214 messages or descriptions, 120 generic fields, and 3 name/title fields.
 
 The deduplication pass removed 389 bundles whose starting screenshot exactly matched an earlier retained bundle. Consequently, no exact input-action pair is repeated and no identical input-action pair has conflicting future targets. The original v4 data remains locally available as a recoverable pre-filter backup.
 
 Run the audit again with:
 
 ```powershell
-python scripts/audit_dataset.py data/synthetic/clean-20260808-v5/full `
+python scripts/audit_dataset.py data/synthetic/clean-20260808-v7/full `
   --allow-filtered-counts --require-unique-current `
-  --output data/synthetic/clean-20260808-v5/audit_report.json
+  --maximum-reset-changed-fraction 0.0001 `
+  --output data/synthetic/clean-20260808-v7/audit_report.json
+
+python scripts/verify_typing_regeneration.py `
+  data/synthetic/clean-20260808-v5/full `
+  data/synthetic/clean-20260808-v7/full `
+  --output data/synthetic/clean-20260808-v7/typing_verification.json
 ```
 
 ## Limits on what this proves
 
-These are deterministic mock applications, not live websites. Synthetic text variants and mock state logic are useful for a controlled MVP but do not establish performance on real browser tasks. The current typing branches all use the same fixed-length synthetic text pattern and mostly target search fields, so they do not support a claim about broad typing behavior. The dataset can test whether action-conditioned dynamics are learned; only the controlled four-model experiment can show whether that learning improves downstream computer use, accuracy, data efficiency, or inference cost.
+These are deterministic mock applications, not live websites. Synthetic text variants and mock state logic are useful for a controlled MVP but do not establish performance on real browser tasks. About 92% of typing branches still use search or filter fields because those are the editable controls exposed by most existing starting screens; changing that substantially would require collecting new starting states rather than regenerating only the typing branches. The dataset can test whether action-conditioned dynamics are learned; only the controlled four-model experiment can show whether that learning improves downstream computer use, accuracy, data efficiency, or inference cost.
