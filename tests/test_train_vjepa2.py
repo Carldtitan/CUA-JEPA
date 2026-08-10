@@ -12,6 +12,9 @@ from cua_jepa.train_vjepa2 import (
     letterbox_gui_image,
     pilot_success,
     select_balanced_encoded_bundles,
+    two_tile_action_coordinates,
+    two_tile_gui_images,
+    two_tile_screen_positions,
     validate_vjepa2_pilot_artifacts,
 )
 
@@ -55,6 +58,40 @@ def test_letterbox_moves_pointer_coordinates_with_gui_content() -> None:
     assert top_left["y_normalized"] == 56 / 256
     assert bottom_right["x_normalized"] == 1.0
     assert bottom_right["y_normalized"] == 200 / 256
+
+
+def test_two_tiles_keep_both_screen_edges_at_full_height() -> None:
+    image = Image.new("RGB", (1280, 720), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 39, 719), fill="red")
+    draw.rectangle((1240, 0, 1279, 719), fill="blue")
+    left, right = two_tile_gui_images(image)
+    assert left.size == (256, 256)
+    assert right.size == (256, 256)
+    assert left.getpixel((2, 128))[0] > 200
+    assert right.getpixel((253, 128))[2] > 200
+
+
+def test_two_tile_pointer_is_active_only_where_visible() -> None:
+    left_action, right_action = two_tile_action_coordinates(
+        {"kind": "click", "x_normalized": 0.1, "y_normalized": 0.75}, 1280, 720
+    )
+    assert left_action["spatial_active"] is True
+    assert right_action["spatial_active"] is False
+    assert left_action["y_normalized"] == 0.75
+    overlap_left, overlap_right = two_tile_action_coordinates(
+        {"kind": "click", "x_normalized": 0.5, "y_normalized": 0.5}, 1280, 720
+    )
+    assert overlap_left["spatial_active"] is True
+    assert overlap_right["spatial_active"] is True
+
+
+def test_two_tile_positions_cover_complete_screen() -> None:
+    positions = two_tile_screen_positions(1280, 720)
+    assert positions.shape == (512, 3)
+    assert positions[:, 0].min() > 0.0
+    assert positions[:, 0].max() < 1.0
+    assert set(positions[:, 2].tolist()) == {0.0, 1.0}
 
 
 def test_select_balanced_encoded_bundles_round_robins_apps() -> None:

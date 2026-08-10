@@ -369,13 +369,15 @@ def run_vjepa2_gui_pilot(
         "separation",
         "scaled_separation",
         "scaled_action_token",
+        "tiled_smoke",
+        "tiled_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
     config.memory_gib = 24.0
     if seed:
         config.seed = seed
-    if mode in {"smoke", "action_token_smoke"}:
+    if mode in {"smoke", "action_token_smoke", "tiled_smoke"}:
         config.max_steps = 2
         config.max_train_transitions = 8
         config.max_validation_transitions = 8
@@ -388,6 +390,9 @@ def run_vjepa2_gui_pilot(
         config.max_runtime_seconds = 20 * 60
         if mode == "action_token_smoke":
             config.predictor_architecture = "action_token_spatial"
+        elif mode == "tiled_smoke":
+            config.screen_views = "two_tiles"
+            config.predictor_architecture = "tiled_adaln_spatial"
     elif mode == "pure":
         config.action_separation_weight = 0.0
     elif mode == "separation":
@@ -401,8 +406,12 @@ def run_vjepa2_gui_pilot(
         config.log_every = 50
         if mode == "scaled_action_token":
             config.predictor_architecture = "action_token_spatial"
+        elif mode == "tiled_separation":
+            config.screen_views = "two_tiles"
+            config.predictor_architecture = "tiled_adaln_spatial"
+            config.encoder_bundle_batch_size = 4
 
-    if mode in {"scaled_separation", "scaled_action_token"}:
+    if mode in {"scaled_separation", "scaled_action_token", "tiled_separation"}:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
         ]
@@ -488,6 +497,8 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_separation",
         "vjepa2_gui_scaled_separation",
         "vjepa2_gui_scaled_action_token",
+        "vjepa2_gui_tiled_smoke",
+        "vjepa2_gui_tiled_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

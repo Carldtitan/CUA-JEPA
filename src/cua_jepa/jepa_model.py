@@ -88,7 +88,9 @@ def action_spatial_features(
     features: list[torch.Tensor] = []
     for action in actions:
         kind = str(action.get("kind", ""))
-        if kind not in {"click", "type"}:
+        if kind not in {"click", "type"} or not bool(
+            action.get("spatial_active", True)
+        ):
             spatial = torch.zeros((pooled_h, pooled_w, 3), device=device)
         else:
             action_x = float(action.get("x_normalized", 0.0) or 0.0)
@@ -174,6 +176,56 @@ class ActionConditionedPredictor(nn.Module):
         for block in self.blocks:
             hidden = block(hidden, action_embedding.float())
         # There is no direct current-to-future copy path.
+        prediction = self.output_projection(self.output_norm(hidden))
+        return prediction.squeeze(0) if squeeze else prediction
+
+
+class TiledActionConditionedPredictor(ActionConditionedPredictor):
+    """Condition tiled visual tokens on their location in the complete screen."""
+
+    def __init__(
+        self,
+        latent_dim: int = 2048,
+        hidden_dim: int = 384,
+        action_dim: int = 384,
+        layers: int = 2,
+        heads: int = 8,
+    ) -> None:
+        super().__init__(latent_dim, hidden_dim, action_dim, layers, heads)
+        self.screen_position_projection = nn.Linear(3, hidden_dim, bias=False)
+
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+        screen_positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if screen_positions is None:
+            raise ValueError("Tiled prediction requires screen token positions")
+        squeeze = current_tokens.ndim == 2
+        if squeeze:
+            current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
+        if screen_positions.ndim == 2:
+            screen_positions = screen_positions.unsqueeze(0)
+        if screen_positions.shape[0] == 1 and current_tokens.shape[0] > 1:
+            screen_positions = screen_positions.expand(current_tokens.shape[0], -1, -1)
+        hidden = self.input_projection(self.input_norm(current_tokens.float()))
+        if screen_positions.shape[:2] != hidden.shape[:2]:
+            raise ValueError(
+                f"Screen position shape mismatch: {screen_positions.shape} vs {hidden.shape}"
+            )
+        hidden = hidden + self.screen_position_projection(screen_positions.float())
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != hidden.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {hidden.shape}"
+                )
+            hidden = hidden + self.spatial_action_projection(spatial_action.float())
+        for block in self.blocks:
+            hidden = block(hidden, action_embedding.float())
         prediction = self.output_projection(self.output_norm(hidden))
         return prediction.squeeze(0) if squeeze else prediction
 

@@ -869,6 +869,14 @@ The local source metrics are:
 - **Correction:** Create the local directory first. Use the remote folder path without a glob. Validate every downloaded artifact set.
 - **Status:** Corrected. Three complete artifact sets pass the local artifact validator. The three corrupt temporary files were removed. The originals remain in Modal.
 
+### 101. Full-screen letterboxing kept coverage but removed small GUI detail
+
+- **Technical term:** Spatial-resolution bottleneck.
+- **Mistake:** We kept the complete 1280-by-720 screen inside a 256-by-256 input. The useful screen content was only about 256 by 144 pixels.
+- **Simple explanation:** The model saw the full screen, but many small buttons and text became too small. This can limit click prediction.
+- **Correction:** Test two overlapping 256-by-256 screen views. Give each visual token its position in the complete screen. Map each click into the correct view.
+- **Status:** Implemented as a separate controlled method. All 57 local tests pass. Modal smoke and pilot results are not yet available.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
@@ -911,14 +919,13 @@ The full Model 4 code adds these safeguards:
 
 The following work is not complete:
 
-1. Save per-bundle evaluation records and calculate bundle-level confidence intervals.
-2. Prepare the controlled SFT dataset.
-3. Train Models 2, 3, and 4 with identical SFT settings.
-4. Measure task success and SFT sample efficiency.
-5. Collect real multi-step sequences if the one-step MVP shows a useful signal.
-6. Collect more non-search typing states.
-7. Improve or rebalance scroll transitions.
-8. Test on real, unseen software.
-9. Measure observability overhead in a longer timing pilot.
-10. Complete and analyze the approved full Model 4 run.
-11. Replace the weak collapse stop rule before a later full run.
+1. Prepare the controlled SFT dataset.
+2. Train Models 2, 3, and 4 with identical SFT settings.
+3. Measure task success and SFT sample efficiency.
+4. Collect real multi-step sequences if the one-step MVP shows a useful signal.
+5. Collect more non-search typing states.
+6. Improve or rebalance scroll transitions.
+7. Test on real, unseen software.
+8. Measure observability overhead in a longer timing pilot.
+9. Complete and analyze the approved full Model 4 run.
+10. Replace the weak collapse stop rule before a later full run.

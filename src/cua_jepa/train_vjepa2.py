@@ -23,6 +23,7 @@ from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
     ActionTokenConditionedPredictor,
+    TiledActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -63,6 +64,7 @@ class VJEPA2PilotConfig:
     predictor_layers: int = 6
     predictor_heads: int = 8
     predictor_architecture: str = "adaln_spatial"
+    screen_views: str = "letterbox"
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
     action_separation_weight: float = 0.25
@@ -102,6 +104,8 @@ class EncodedBundle:
     current: torch.Tensor
     targets: torch.Tensor
     target_weights: torch.Tensor
+    spatial_features: torch.Tensor | None = None
+    screen_positions: torch.Tensor | None = None
 
 
 def _action_embedding(
@@ -111,6 +115,28 @@ def _action_embedding(
 ) -> torch.Tensor:
     kinds, numeric, text_bytes, text_lengths = actions_to_tensors(actions, device)
     return action_encoder(kinds, numeric, text_bytes, text_lengths)
+
+
+def _bundle_spatial_features(
+    bundle: EncodedBundle, grid: torch.Tensor, device: torch.device
+) -> torch.Tensor:
+    if bundle.spatial_features is not None:
+        return bundle.spatial_features.to(device=device, dtype=torch.float32)
+    return action_spatial_features(bundle.spatial_actions, grid, device)
+
+
+def _predict_bundle_deltas(
+    predictor: torch.nn.Module,
+    current: torch.Tensor,
+    embeddings: torch.Tensor,
+    spatial: torch.Tensor,
+    bundle: EncodedBundle,
+    device: torch.device,
+) -> torch.Tensor:
+    if bundle.screen_positions is None:
+        return predictor(current, embeddings, spatial)
+    positions = bundle.screen_positions.to(device=device, dtype=torch.float32)
+    return predictor(current, embeddings, spatial, positions)
 
 
 def letterbox_gui_image(image: Image.Image, size: int = 256) -> Image.Image:
@@ -151,9 +177,77 @@ def gui_image_video(image: Image.Image) -> torch.Tensor:
     return torch.stack((frame, frame), dim=0)
 
 
-def encode_screen_batch(images, processor, encoder, device: torch.device) -> torch.Tensor:
+def square_image_video(image: Image.Image) -> torch.Tensor:
+    """Repeat one prepared square image as the two frames V-JEPA 2 expects."""
+
+    if image.size != (256, 256):
+        raise ValueError(f"Prepared V-JEPA 2 image is not 256 by 256: {image.size}")
+    array = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    frame = torch.from_numpy(array).permute(2, 0, 1)
+    return torch.stack((frame, frame), dim=0)
+
+
+def two_tile_gui_images(image: Image.Image, size: int = 256) -> tuple[Image.Image, Image.Image]:
+    """Return two overlapping square views that keep a wide GUI at full height."""
+
+    source = image.convert("RGB")
+    resized_width = max(size, round(source.width * size / source.height))
+    resized = source.resize((resized_width, size), resample=Image.Resampling.LANCZOS)
+    right_offset = max(0, resized_width - size)
+    return (
+        resized.crop((0, 0, size, size)),
+        resized.crop((right_offset, 0, right_offset + size, size)),
+    )
+
+
+def two_tile_action_coordinates(
+    action: dict[str, Any], source_width: int, source_height: int, size: int = 256
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Map one pointer action into both overlapping GUI views."""
+
+    resized_width = max(size, round(source_width * size / source_height))
+    global_x = float(action.get("x_normalized", 0.0) or 0.0) * resized_width
+    global_y = float(action.get("y_normalized", 0.0) or 0.0) * size
+    results = []
+    for offset in (0, max(0, resized_width - size)):
+        local_x = (global_x - offset) / size
+        result = dict(action)
+        result["x_normalized"] = min(max(local_x, 0.0), 1.0)
+        result["y_normalized"] = min(max(global_y / size, 0.0), 1.0)
+        result["spatial_active"] = 0.0 <= local_x <= 1.0
+        results.append(result)
+    return results[0], results[1]
+
+
+def two_tile_screen_positions(
+    source_width: int, source_height: int, size: int = 256, tokens_per_side: int = 16
+) -> torch.Tensor:
+    """Give each tile token a position in the complete GUI screen."""
+
+    resized_width = max(size, round(source_width * size / source_height))
+    offsets = (0, max(0, resized_width - size))
+    values: list[list[float]] = []
+    for tile_index, offset in enumerate(offsets):
+        for row in range(tokens_per_side):
+            for column in range(tokens_per_side):
+                values.append(
+                    [
+                        (offset + (column + 0.5) * size / tokens_per_side) / resized_width,
+                        (row + 0.5) / tokens_per_side,
+                        float(tile_index),
+                    ]
+                )
+    return torch.tensor(values, dtype=torch.float32)
+
+
+def encode_screen_batch(
+    images, processor, encoder, device: torch.device, prepared_squares: bool = False
+) -> torch.Tensor:
     inputs = processor(
-        [gui_image_video(image) for image in images],
+        [
+            square_image_video(image) if prepared_squares else gui_image_video(image)
+            for image in images
+        ],
         return_tensors="pt",
         do_resize=False,
         do_center_crop=False,
@@ -174,6 +268,8 @@ def encode_bundles(
     config: VJEPA2PilotConfig,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[EncodedBundle]:
+    if config.screen_views not in {"letterbox", "two_tiles"}:
+        raise ValueError(f"Unknown V-JEPA 2 screen view mode: {config.screen_views}")
     encoded: list[EncodedBundle] = []
     grid = torch.tensor([1, 32, 32])
     batch_size = max(config.encoder_bundle_batch_size, 1)
@@ -185,44 +281,120 @@ def encode_bundles(
             current = branches[0].current_image()
             futures = [branch.future_image() for branch in branches]
             decoded.append((current, futures))
-            images.extend([current, *futures])
-        features = encode_screen_batch(images, processor, encoder, device)
+            if config.screen_views == "two_tiles":
+                images.extend(two_tile_gui_images(current))
+                for future in futures:
+                    images.extend(two_tile_gui_images(future))
+            else:
+                images.extend([current, *futures])
+        features = encode_screen_batch(
+            images,
+            processor,
+            encoder,
+            device,
+            prepared_squares=config.screen_views == "two_tiles",
+        )
         for index, branches in enumerate(chunk):
-            start = index * 5
             current_image, future_images = decoded[index]
-            current_mask_image = letterbox_gui_image(current_image)
-            weights = torch.stack(
-                [
-                    change_patch_weights(
-                        current_mask_image,
-                        letterbox_gui_image(future),
-                        grid,
-                        torch.device("cpu"),
-                        changed_weight=config.changed_patch_weight,
-                        unchanged_weight=config.unchanged_patch_weight,
-                        changed_token_threshold=config.changed_token_threshold,
+            if config.screen_views == "two_tiles":
+                start = index * 10
+                current_tiles = two_tile_gui_images(current_image)
+                future_tiles = [two_tile_gui_images(future) for future in future_images]
+                current_features = features[start : start + 2].reshape(-1, 1024)
+                targets = torch.stack(
+                    [
+                        features[start + 2 + branch * 2 : start + 4 + branch * 2].reshape(
+                            -1, 1024
+                        )
+                        for branch in range(4)
+                    ]
+                )
+                weights = torch.stack(
+                    [
+                        torch.cat(
+                            [
+                                change_patch_weights(
+                                    current_tiles[tile],
+                                    future_tiles[branch][tile],
+                                    grid,
+                                    torch.device("cpu"),
+                                    changed_weight=config.changed_patch_weight,
+                                    unchanged_weight=config.unchanged_patch_weight,
+                                    changed_token_threshold=config.changed_token_threshold,
+                                )
+                                for tile in range(2)
+                            ]
+                        )
+                        for branch in range(4)
+                    ]
+                )
+                tile_actions = [
+                    two_tile_action_coordinates(
+                        branch.action, current_image.width, current_image.height
                     )
-                    for future in future_images
+                    for branch in branches
                 ]
-            )
+                spatial_features = torch.stack(
+                    [
+                        torch.cat(
+                            [
+                                action_spatial_features(
+                                    [tile_actions[branch][tile]],
+                                    grid,
+                                    torch.device("cpu"),
+                                )[0]
+                                for tile in range(2)
+                            ]
+                        )
+                        for branch in range(4)
+                    ]
+                )
+                screen_positions = two_tile_screen_positions(
+                    current_image.width, current_image.height
+                )
+                spatial_actions = [dict(branch.action) for branch in branches]
+            else:
+                start = index * 5
+                current_mask_image = letterbox_gui_image(current_image)
+                current_features = features[start]
+                targets = features[start + 1 : start + 5]
+                weights = torch.stack(
+                    [
+                        change_patch_weights(
+                            current_mask_image,
+                            letterbox_gui_image(future),
+                            grid,
+                            torch.device("cpu"),
+                            changed_weight=config.changed_patch_weight,
+                            unchanged_weight=config.unchanged_patch_weight,
+                            changed_token_threshold=config.changed_token_threshold,
+                        )
+                        for future in future_images
+                    ]
+                )
+                spatial_actions = [
+                    letterbox_action_coordinates(
+                        branch.action, current_image.width, current_image.height
+                    )
+                    for branch in branches
+                ]
+                spatial_features = None
+                screen_positions = None
             encoded.append(
                 EncodedBundle(
                     bundle_id=branches[0].bundle_id,
                     app=branches[0].app,
                     split=branches[0].split,
                     actions=[dict(branch.action) for branch in branches],
-                    spatial_actions=[
-                        letterbox_action_coordinates(
-                            branch.action, current_image.width, current_image.height
-                        )
-                        for branch in branches
-                    ],
+                    spatial_actions=spatial_actions,
                     changed_pixel_fractions=[
                         float(branch.changed_pixel_fraction) for branch in branches
                     ],
-                    current=features[start],
-                    targets=features[start + 1 : start + 5],
+                    current=current_features,
+                    targets=targets,
                     target_weights=weights,
+                    spatial_features=spatial_features,
+                    screen_positions=screen_positions,
                 )
             )
         if progress is not None:
@@ -316,7 +488,7 @@ def _finalize_breakdown(
 def evaluate_encoded_bundles(
     bundles: Iterable[EncodedBundle],
     action_encoder: ActionEncoder,
-    predictor: ActionConditionedPredictor,
+    predictor: torch.nn.Module,
     device: torch.device,
     max_bundles: int,
     seed: int,
@@ -344,8 +516,10 @@ def evaluate_encoded_bundles(
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
-            spatial = action_spatial_features(bundle.spatial_actions, grid, device)
-            predicted_deltas = predictor(current, embeddings, spatial)
+            spatial = _bundle_spatial_features(bundle, grid, device)
+            predicted_deltas = _predict_bundle_deltas(
+                predictor, current, embeddings, spatial, bundle, device
+            )
             predictions = reconstruct_future_latent(current, predicted_deltas)
             shared_weights = weights.max(dim=0).values
             normalized_targets = torch.nn.functional.normalize(targets.float(), dim=-1)
@@ -584,6 +758,7 @@ def train_vjepa2_gui_pilot(
     predictor_classes = {
         "adaln_spatial": ActionConditionedPredictor,
         "action_token_spatial": ActionTokenConditionedPredictor,
+        "tiled_adaln_spatial": TiledActionConditionedPredictor,
     }
     if config.predictor_architecture not in predictor_classes:
         raise ValueError(
@@ -665,8 +840,10 @@ def train_vjepa2_gui_pilot(
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
-            spatial = action_spatial_features(bundle.spatial_actions, grid, device)
-            predicted_deltas = predictor(current, embeddings, spatial)
+            spatial = _bundle_spatial_features(bundle, grid, device)
+            predicted_deltas = _predict_bundle_deltas(
+                predictor, current, embeddings, spatial, bundle, device
+            )
             target_deltas = latent_delta(current, targets)
             changed_loss = latent_delta_loss(
                 predicted_deltas,

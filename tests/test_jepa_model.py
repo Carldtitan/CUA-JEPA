@@ -5,6 +5,7 @@ from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
     ActionTokenConditionedPredictor,
+    TiledActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -83,6 +84,30 @@ def test_click_coordinates_bind_to_visual_tokens() -> None:
     )
     assert left.shape == (8, 3)
     assert left[:, 0].argmax() != right[:, 0].argmax()
+
+
+def test_inactive_tile_has_no_pointer_heatmap() -> None:
+    inactive = action_spatial_features(
+        [{"kind": "click", "x_normalized": 0.5, "y_normalized": 0.5, "spatial_active": False}],
+        grid_thw=torch.tensor([1, 4, 8]),
+        device=torch.device("cpu"),
+    )
+    assert torch.count_nonzero(inactive) == 0
+
+
+def test_tiled_predictor_uses_complete_screen_positions() -> None:
+    torch.manual_seed(8)
+    predictor = TiledActionConditionedPredictor(
+        latent_dim=32, hidden_dim=32, action_dim=32, layers=1, heads=4
+    )
+    current = torch.randn(8, 32)
+    action = torch.randn(2, 32)
+    spatial = torch.zeros(2, 8, 3)
+    positions = torch.rand(8, 3)
+    prediction = predictor(current, action, spatial, positions)
+    prediction.sum().backward()
+    assert prediction.shape == (2, 8, 32)
+    assert predictor.screen_position_projection.weight.grad is not None
 
 
 def test_action_separation_prefers_matched_futures() -> None:
