@@ -82,6 +82,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_json(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def runtime_audit() -> dict[str, Any]:
     def version(name: str) -> str | None:
         try:
@@ -117,6 +122,8 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
         raise RuntimeError(f"The source JEPA metrics are missing: {final_metrics_path}")
     metrics = json.loads(final_metrics_path.read_text(encoding="utf-8"))
     config = metrics["config"]
+    dataset_audit = metrics.get("dataset_audit")
+    bundle_order_path = run_root / "bundle_order.json"
     action_assignment = config.get("training_action_assignment", "correct")
     correct_actions = action_assignment == "correct"
     return {
@@ -130,6 +137,12 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
         ),
         "source_run_directory": run_root.name,
         "final_metrics_sha256": sha256_file(final_metrics_path),
+        "dataset_audit_sha256": (
+            sha256_json(dataset_audit) if dataset_audit is not None else None
+        ),
+        "bundle_order_sha256": (
+            sha256_file(bundle_order_path) if bundle_order_path.is_file() else None
+        ),
         "adapter_model_sha256": sha256_file(
             jepa_adapter_path / "adapter_model.safetensors"
         ),

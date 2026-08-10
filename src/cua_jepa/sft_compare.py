@@ -82,6 +82,149 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
     }
 
 
+def audit_controlled_run_triplet(
+    model2_dir: str | Path,
+    model3_dir: str | Path,
+    model4_dir: str | Path,
+) -> dict[str, Any]:
+    """Reject the three-model comparison when a required control differs."""
+    directories = {
+        "model2": Path(model2_dir),
+        "model3": Path(model3_dir),
+        "model4": Path(model4_dir),
+    }
+
+    def load_all(filename: str) -> dict[str, Any]:
+        return {name: _read_json(path / filename) for name, path in directories.items()}
+
+    configs = load_all("config.json")
+    datasets = load_all("dataset_audit.json")
+    initializations = load_all("initialization_audit.json")
+    runtimes = load_all("runtime_audit.json")
+    sources = load_all("source_jepa_audit.json")
+    validation_ids = load_all("validation_example_ids.json")
+    training_orders = load_all("training_order.json")
+
+    def all_equal(values: dict[str, Any]) -> bool:
+        items = list(values.values())
+        return all(value == items[0] for value in items[1:])
+
+    source3_config = sources["model3"].get("training_config", {})
+    source4_config = sources["model4"].get("training_config", {})
+    matched_source_fields = (
+        "model_id",
+        "model_revision",
+        "max_pixels",
+        "min_pixels",
+        "lora_rank",
+        "lora_alpha",
+        "predictor_dim",
+        "predictor_layers",
+        "predictor_heads",
+        "learning_rate",
+        "weight_decay",
+        "target_ema_decay",
+        "changed_patch_weight",
+        "unchanged_patch_weight",
+        "changed_token_threshold",
+        "gradient_accumulation_steps",
+        "max_steps",
+        "max_train_transitions",
+        "max_validation_transitions",
+        "action_separation_weight",
+        "action_separation_temperature",
+        "changed_region_loss_weight",
+        "global_loss_weight",
+        "delta_direction_weight",
+        "delta_magnitude_weight",
+        "variance_regularization_weight",
+        "covariance_regularization_weight",
+        "relation_regularization_weight",
+    )
+    checks = {
+        "same_sft_config": all_equal(configs),
+        "same_runtime": all_equal(runtimes),
+        "same_dataset_sha256": all_equal(
+            {name: value.get("dataset_sha256") for name, value in datasets.items()}
+        ),
+        "same_validation_ids": all_equal(validation_ids),
+        "same_training_order": all_equal(training_orders),
+        "correct_variants": all(
+            initializations[name].get("variant") == name for name in directories
+        ),
+        "same_base_model": all_equal(
+            {name: value.get("base_model") for name, value in initializations.items()}
+        ),
+        "same_base_revision": all_equal(
+            {name: value.get("base_revision") for name, value in initializations.items()}
+        ),
+        "all_base_weights_frozen": all(
+            value.get("base_trainable_parameters") == 0
+            for value in initializations.values()
+        ),
+        "same_vision_lora_parameters": all_equal(
+            {
+                name: value.get("vision_lora_parameters")
+                for name, value in initializations.items()
+            }
+        ),
+        "same_language_lora_parameters": all_equal(
+            {
+                name: value.get("language_lora_parameters")
+                for name, value in initializations.items()
+            }
+        ),
+        "same_language_initialization": all_equal(
+            {
+                name: value.get("initial_language_lora_sha256")
+                for name, value in initializations.items()
+            }
+        ),
+        "model2_has_no_jepa_source": sources["model2"].get("source") is None,
+        "model3_has_no_correct_actions": (
+            sources["model3"].get("training_action_assignment") == "no_action"
+            and sources["model3"].get("uses_correct_action_information") is False
+        ),
+        "model4_has_correct_actions": (
+            sources["model4"].get("training_action_assignment", "correct") == "correct"
+            and sources["model4"].get("uses_correct_action_information") is True
+        ),
+        "model3_and_model4_same_jepa_dataset": (
+            sources["model3"].get("dataset_audit_sha256")
+            == sources["model4"].get("dataset_audit_sha256")
+            and sources["model3"].get("bundle_order_sha256")
+            == sources["model4"].get("bundle_order_sha256")
+            and sources["model3"].get("dataset_audit_sha256") is not None
+            and sources["model3"].get("bundle_order_sha256") is not None
+        ),
+        "model3_and_model4_same_jepa_steps": (
+            sources["model3"].get("steps") == sources["model4"].get("steps") == 7_667
+        ),
+        "model3_and_model4_same_jepa_architecture": all(
+            source3_config.get(field) == source4_config.get(field)
+            for field in matched_source_fields
+        ),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise ValueError(f"The controlled SFT triplet failed checks: {failed}")
+    return {
+        "passed": True,
+        "checks": checks,
+        "dataset_sha256": datasets["model2"].get("dataset_sha256"),
+        "validation_examples": len(validation_ids["model2"]),
+        "training_examples": len(training_orders["model2"]),
+        "model3_jepa_adapter_sha256": initializations["model3"].get(
+            "source_jepa_adapter_sha256"
+        ),
+        "model4_jepa_adapter_sha256": initializations["model4"].get(
+            "source_jepa_adapter_sha256"
+        ),
+        "training_code_sha256": runtimes["model2"].get("training_code_sha256"),
+        "evaluation_code_sha256": runtimes["model2"].get("evaluation_code_sha256"),
+    }
+
+
 def _percentile(sorted_values: list[float], fraction: float) -> float:
     if not sorted_values:
         raise ValueError("Cannot calculate a percentile from no values")
