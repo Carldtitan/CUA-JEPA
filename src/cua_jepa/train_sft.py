@@ -610,7 +610,11 @@ def train_policy_sft(
             print(json.dumps(event, sort_keys=True), flush=True)
             recent_losses.clear()
             recent_action_losses.clear()
-        if config.monitor_every and optimizer_step % config.monitor_every == 0:
+        if (
+            config.monitor_every
+            and optimizer_step % config.monitor_every == 0
+            and optimizer_step < config.max_steps
+        ):
             evaluate_policy(
                 model,
                 processor,
