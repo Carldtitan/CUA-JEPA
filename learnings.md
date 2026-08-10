@@ -749,6 +749,14 @@ The local source metrics are:
 - **Correction:** Check `$LASTEXITCODE` after every required command. Disable unrelated global pytest plugins for repository tests.
 - **Status:** Corrected in later checks. The isolated test suite passed with 42 tests.
 
+### 86. Windows stopped a Modal launch when it printed a Unicode symbol
+
+- **Technical term:** Console encoding failure.
+- **Mistake:** The first Modal launch used the default Windows character encoding.
+- **Simple explanation:** Modal printed a check mark. The Windows console could not print it, so the local controller stopped.
+- **Correction:** Set `PYTHONUTF8=1` for every Modal command on this computer.
+- **Status:** Corrected. The next Modal launch started successfully.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:

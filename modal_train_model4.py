@@ -23,18 +23,8 @@ import modal
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "configs" / "model4_jepa_pilot.json"
 DATA_ROOT = ROOT / "data" / "synthetic" / "clean-20260808-v7" / "full"
-TRAIN_TAR = (
-    DATA_ROOT
-    / "train"
-    / "github_mock"
-    / "train-github_mock-shard-0000.tar"
-)
-VALIDATION_TAR = (
-    DATA_ROOT
-    / "validation"
-    / "jira_mock"
-    / "validation-jira_mock-shard-0000.tar"
-)
+TRAIN_TAR = DATA_ROOT / "train" / "github_mock" / "train-github_mock-shard-0000.tar"
+VALIDATION_TAR = DATA_ROOT / "validation" / "jira_mock" / "validation-jira_mock-shard-0000.tar"
 AUDIT_REPORT = DATA_ROOT.parent / "audit_report.json"
 
 
@@ -121,6 +111,64 @@ def check_processor() -> dict:
     return {
         "pixel_values_shape": list(values["pixel_values"].shape),
         "image_grid_thw": values["image_grid_thw"].tolist(),
+    }
+
+
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4,
+    memory=16_384,
+    timeout=30 * 60,
+    scaledown_window=60,
+    volumes={
+        "/root/.cache/huggingface": hf_cache_volume,
+        "/dataset": data_volume,
+    },
+)
+def check_vjepa2_encoder() -> dict:
+    import numpy as np
+    import torch
+    from transformers import AutoModel, AutoVideoProcessor
+
+    from cua_jepa.jepa_data import load_transition_tar
+
+    model_id = "facebook/vjepa2-vitl-fpc64-256"
+    paths = sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
+    if not paths:
+        raise RuntimeError("The Model 4 stage-2 data volume is empty")
+    branches = load_transition_tar(paths[0], limit=4)
+    processor = AutoVideoProcessor.from_pretrained(model_id)
+    model = AutoModel.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    model.requires_grad_(False).eval().to("cuda")
+
+    def encode(image) -> torch.Tensor:
+        array = np.asarray(image, dtype=np.uint8).copy()
+        frame = torch.from_numpy(array).permute(2, 0, 1)
+        video = torch.stack((frame, frame), dim=0)
+        inputs = processor(video, return_tensors="pt").to("cuda")
+        with torch.inference_mode():
+            output = model(**inputs, skip_predictor=True)
+        return output.last_hidden_state.float().cpu()
+
+    current_first = encode(branches[0].current_image())
+    current_second = encode(branches[0].current_image())
+    futures = [encode(branch.future_image()) for branch in branches]
+    pair_distances: list[float] = []
+    for first in range(4):
+        for second in range(first + 1, 4):
+            pair_distances.append(
+                float(torch.nn.functional.mse_loss(futures[first], futures[second]).item())
+            )
+    return {
+        "model_id": model_id,
+        "hidden_shape": list(current_first.shape),
+        "dtype": str(current_first.dtype),
+        "repeat_max_difference": float((current_first - current_second).abs().max().item()),
+        "future_pair_mse_min": min(pair_distances),
+        "future_pair_mse_mean": sum(pair_distances) / len(pair_distances),
+        "future_pair_mse_max": max(pair_distances),
+        "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
     }
 
 
@@ -219,9 +267,7 @@ def run_model4_training(
             "'separation', 'stage2', or 'model4_full'"
         )
     seed_label = f"-seed{config.seed}"
-    run_id = datetime.now(timezone.utc).strftime(
-        f"model4-{mode}{seed_label}-%Y%m%dT%H%M%SZ"
-    )
+    run_id = datetime.now(timezone.utc).strftime(f"model4-{mode}{seed_label}-%Y%m%dT%H%M%SZ")
     output_dir = Path("/training") / run_id
     train_paths = ["/opt/cua-jepa/train.tar"]
     validation_paths = ["/opt/cua-jepa/validation.tar"]
@@ -230,17 +276,14 @@ def run_model4_training(
             str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
         ]
         validation_paths = [
-            str(path)
-            for path in sorted(Path("/dataset/model4-stage2/validation").glob("*.tar"))
+            str(path) for path in sorted(Path("/dataset/model4-stage2/validation").glob("*.tar"))
         ]
     elif mode == "model4_full":
         train_paths = [
-            str(path)
-            for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
+            str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
         ]
         validation_paths = [
-            str(path)
-            for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
+            str(path) for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
         ]
         if len(train_paths) != 320 or len(validation_paths) != 20:
             raise RuntimeError(
@@ -296,6 +339,9 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     if mode == "deps":
         print(json.dumps(check_processor.remote(), indent=2))
         return
+    if mode == "vjepa2_encoder_smoke":
+        print(json.dumps(check_vjepa2_encoder.remote(), indent=2))
+        return
     try:
         git_commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
@@ -303,7 +349,5 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     except (OSError, subprocess.CalledProcessError):
         git_commit = "unknown"
     source_dataset_audit_sha256 = hashlib.sha256(AUDIT_REPORT.read_bytes()).hexdigest()
-    metrics = run_model4_training.remote(
-        mode, seed, git_commit, source_dataset_audit_sha256
-    )
+    metrics = run_model4_training.remote(mode, seed, git_commit, source_dataset_audit_sha256)
     print(json.dumps(metrics, indent=2))
