@@ -6,6 +6,8 @@ The primary experiment compares four controlled model branches. See [the four-mo
 
 The project learning log records mistakes, corrections, evidence, and open limits. See [learnings.md](learnings.md).
 
+The full-run measurement plan is in [full_run_observability.md](full_run_observability.md).
+
 ## Dataset milestone
 
 The final synthetic dataset is in `data/synthetic/clean-20260808-v7/full`.
