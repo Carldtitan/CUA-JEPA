@@ -9,6 +9,7 @@ from cua_jepa.train_vjepa2 import (
     balanced_training_epoch,
     bundle_bootstrap_ci95,
     encoded_feature_cache_key,
+    fusion_gate_metrics,
     gui_image_video,
     letterbox_action_coordinates,
     letterbox_gui_image,
@@ -25,6 +26,8 @@ from cua_jepa.train_vjepa2 import (
     validate_encoded_feature_cache,
     VJEPA2PilotConfig,
 )
+
+from cua_jepa.jepa_model import QwenVJEPAFusionPredictor
 
 
 def _bundle(bundle_id: str, app: str) -> EncodedBundle:
@@ -193,6 +196,24 @@ def test_qwen_tokens_resize_to_fixed_semantic_grid() -> None:
     fixed = qwen_tokens_to_fixed_grid(tokens, torch.tensor([1, 8, 12]), size=4)
     assert fixed.shape == (16, 32)
     assert torch.isfinite(fixed).all()
+
+
+def test_fusion_gate_metrics_report_effective_gate_size() -> None:
+    predictor = QwenVJEPAFusionPredictor(
+        latent_dim=8,
+        semantic_dim=8,
+        hidden_dim=8,
+        action_dim=8,
+        layers=2,
+        heads=2,
+    )
+    assert fusion_gate_metrics(predictor)["fusion_gate_effective_l2"] == 0.0
+    with torch.no_grad():
+        predictor.cross_gates[0, 0] = 0.5
+    metrics = fusion_gate_metrics(predictor)
+    assert metrics["fusion_gate_effective_l2"] > 0.0
+    assert len(metrics["fusion_gate_effective_l2_by_layer"]) == 2
+    assert fusion_gate_metrics(torch.nn.Linear(2, 2)) == {}
 
 
 def test_frozen_feature_cache_validator_rejects_wrong_count() -> None:

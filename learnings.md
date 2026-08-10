@@ -1024,4 +1024,12 @@ The following work is not complete:
 - **Mistake:** We tested Qwen targets and V-JEPA2 targets as separate choices. We did not test whether their features help each other.
 - **Simple explanation:** Qwen can represent GUI text and controls. V-JEPA2 can represent visual changes. One encoder does not need to replace the other.
 - **Correction:** Freeze both encoders. Resize Qwen visual tokens to a small fixed grid. Add them through zero-initialized gated cross-attention in the V-JEPA predictor. Keep the old target, data, seed, and action-separation loss.
-- **Status:** Implemented. All 67 local tests pass. A Modal smoke test is pending.
+- **Status:** Tested and rejected as the next main method. It reached 40.4% overall and 35.5% on clicks. These results match the V-JEPA-only result. The learned fusion gates were not zero, so the predictor used Qwen features, but the features did not improve this task.
+
+### 114. The first fusion run did not record its gate size
+
+- **Technical term:** Fusion-gate observability.
+- **Mistake:** The Qwen fusion run saved the gate weights, but it did not put their size in the live log or final metrics.
+- **Simple explanation:** The score did not improve. We could not immediately tell if the model ignored Qwen.
+- **Correction:** Record the fusion-gate gradient and the effective gate size during training. Save the final values with the other metrics.
+- **Status:** Corrected. The saved run was inspected. Its raw gate L2 norm was 0.163. Each of the six layers had a nonzero gate. New runs now record this information automatically.

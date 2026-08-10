@@ -106,6 +106,25 @@ class VJEPA2PilotConfig:
     qwen_feature_cache_version: int = 1
 
 
+def fusion_gate_metrics(predictor: torch.nn.Module) -> dict[str, Any]:
+    """Measure whether a gated semantic-fusion path is active."""
+
+    gates = getattr(predictor, "cross_gates", None)
+    if not isinstance(gates, torch.Tensor):
+        return {}
+    raw = gates.detach().float()
+    effective = torch.tanh(raw)
+    return {
+        "fusion_gate_raw_l2": float(torch.linalg.vector_norm(raw).item()),
+        "fusion_gate_effective_l2": float(torch.linalg.vector_norm(effective).item()),
+        "fusion_gate_effective_mean_abs": float(effective.abs().mean().item()),
+        "fusion_gate_effective_max_abs": float(effective.abs().max().item()),
+        "fusion_gate_effective_l2_by_layer": [
+            float(torch.linalg.vector_norm(layer).item()) for layer in effective
+        ],
+    }
+
+
 @dataclass
 class EncodedBundle:
     bundle_id: str
@@ -1319,6 +1338,12 @@ def train_vjepa2_gui_pilot(
                     "predictor_gradient_norm": gradient_l2_norm(predictor.parameters()),
                     "action_encoder_parameter_norm": parameter_l2_norm(action_encoder.parameters()),
                     "predictor_parameter_norm": parameter_l2_norm(predictor.parameters()),
+                    "fusion_gate_gradient_norm": gradient_l2_norm(
+                        [predictor.cross_gates]
+                    )
+                    if hasattr(predictor, "cross_gates")
+                    else None,
+                    **fusion_gate_metrics(predictor),
                     "elapsed_seconds": time.perf_counter() - started,
                     "estimated_modal_cost_usd": cost,
                 }
@@ -1389,6 +1414,7 @@ def train_vjepa2_gui_pilot(
         "feature_cache_key": cache_key,
         "qwen_feature_cache_hit": qwen_cache_hit,
         "qwen_feature_cache_key": qwen_cache_key_value,
+        "fusion_gate_metrics": fusion_gate_metrics(predictor),
     }
     manifest["completed_at_utc"] = utc_now()
     manifest["completed_steps"] = step
