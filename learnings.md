@@ -1384,4 +1384,20 @@ The following work is not complete:
 - **Mistake:** The training and evaluation loops did not release the prior input and output tensors before they created the next inputs. The 25-step pilot printed temporary out-of-memory allocation warnings.
 - **Simple explanation:** The next image could enter GPU memory before the prior image left it.
 - **Correction:** Delete each input, generated output, and training output after use. Count non-finite losses and gradients. Stop with a clear reason if either count becomes nonzero.
-- **Status:** Corrected after the paired pilot. The repeated paired smoke completed without a memory warning. Both models reported zero non-finite losses and gradients. Full SFT is active.
+- **Status:** Partly corrected after the paired pilot. The repeated paired smoke had no warning, but larger images in the full run caused the warning again. Training continued with finite losses and gradients.
+
+### 159. The memory smoke did not include a large SFT image
+
+- **Technical term:** Worst-case memory coverage.
+- **Mistake:** The repeated smoke used only its first two training examples. It did not test an example near the maximum image-token count.
+- **Simple explanation:** The small examples passed, but larger full-run examples still caused temporary GPU allocation warnings.
+- **Correction:** Keep the active run while losses and gradients remain finite. Before a later run, add a setup test that selects the largest processed image and performs a full forward and backward pass.
+- **Status:** Found during the active Model 2 and Model 4 full runs. Both runs continued past step 10 with zero non-finite counts.
+
+### 160. The paired live SFT log does not label the model
+
+- **Technical term:** Run-identity observability.
+- **Mistake:** Each training event records the step and metrics but not `variant` or `run_id`. Modal combines both model streams in one app log.
+- **Simple explanation:** A live line does not say whether it came from Model 2 or Model 4.
+- **Correction:** Add `variant` and `run_id` to every future training and evaluation event. Keep the current run because each saved output directory is separate and has its correct model label.
+- **Status:** Found at step 30 of the active paired full run. Final artifacts remain identifiable.
