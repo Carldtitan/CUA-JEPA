@@ -1161,3 +1161,11 @@ The following work is not complete:
 - **Simple explanation:** The set looked natural, but it gave the model too few examples of some actions to learn them well.
 - **Correction:** Keep validation source-like. Cap normal clicks at 65% in training. Use the exact same capped training set for Model 2 and Model 4.
 - **Status:** Corrected before image ingestion or SFT. A final plan audit is required.
+
+### 131. Aria2 treated the archive URLs as mirrors of one file
+
+- **Technical term:** Multi-file download argument semantics.
+- **Mistake:** The first image ingestion command placed many URLs on one Aria2 command line. Aria2 treated them as alternate sources for one download. It also saved the file under a content hash.
+- **Simple explanation:** The job downloaded one 5 GB archive part and then could not find any of the expected file names.
+- **Correction:** Put one URL on each line of an Aria2 input file. Enable server-provided file names. Check all expected parts before extraction.
+- **Status:** Corrected. The failed job ran for about 87 seconds. No raw archive was stored in the persistent volume. No GPU ran.

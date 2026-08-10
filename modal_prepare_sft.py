@@ -72,6 +72,28 @@ def _write_json(path: Path, value) -> None:
     os.replace(temporary, path)
 
 
+def _aria2_download(urls: list[str], destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    input_file = destination / "download-urls.txt"
+    input_file.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    subprocess.run(
+        [
+            "aria2c",
+            f"--input-file={input_file}",
+            "--content-disposition=true",
+            "--continue=true",
+            "--check-integrity=true",
+            "--max-concurrent-downloads=4",
+            "--split=8",
+            "--max-connection-per-server=8",
+            "--min-split-size=64M",
+            "--file-allocation=none",
+            f"--dir={destination}",
+        ],
+        check=True,
+    )
+
+
 @app.function(image=image, cpu=1, memory=1024, timeout=10 * 60)
 def smoke_test_split_archive() -> dict:
     root = Path("/tmp/split-archive-smoke")
@@ -99,11 +121,17 @@ def smoke_test_split_archive() -> dict:
     unwanted = list(extracted.rglob("image-0.png")) + list(extracted.rglob("image-2.png"))
     if len(selected) != 1 or unwanted or selected[0].read_bytes() != bytes([2]) * 100_000:
         raise RuntimeError("Split archive selective extraction failed")
+    download_root = root / "downloads"
+    _aria2_download([f"{HF_ROOT}/README.md", f"{HF_ROOT}/LICENSE.txt"], download_root)
+    downloaded = sorted(path.name for path in download_root.iterdir() if path.is_file())
+    if "README.md" not in downloaded or "LICENSE.txt" not in downloaded:
+        raise RuntimeError(f"Multi-file download names are wrong: {downloaded}")
     return {
         "passed": True,
         "archive_parts": sorted(path.name for path in archive_root.iterdir()),
         "selected_files": [path.name for path in selected],
         "unwanted_files": [path.name for path in unwanted],
+        "downloaded_files": downloaded,
     }
 
 
@@ -180,21 +208,8 @@ def plan_agentnet_sft(train_count: int = 2_000, validation_count: int = 250) -> 
 
 def _download_archives(source_file: str, destination: Path) -> Path:
     directory, names = ARCHIVES[source_file]
-    destination.mkdir(parents=True, exist_ok=True)
     urls = [f"{HF_ROOT}/{directory}/{name}" for name in names]
-    command = [
-        "aria2c",
-        "--continue=true",
-        "--check-integrity=true",
-        "--max-concurrent-downloads=4",
-        "--split=8",
-        "--max-connection-per-server=8",
-        "--min-split-size=64M",
-        "--file-allocation=none",
-        f"--dir={destination}",
-        *urls,
-    ]
-    subprocess.run(command, check=True)
+    _aria2_download(urls, destination)
     missing = [name for name in names if not (destination / name).is_file()]
     if missing:
         raise RuntimeError(f"Archive download is incomplete: {missing}")
