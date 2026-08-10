@@ -94,5 +94,25 @@ def test_source_jepa_audit_records_non_pure_objective(tmp_path) -> None:
     )
     audit = source_jepa_audit(adapter)
     assert audit["uses_action_separation"] is True
+    assert audit["uses_correct_action_information"] is True
     assert audit["objective"].startswith("latent regression plus")
     assert source_jepa_audit(None) == {"source": None}
+
+
+def test_source_jepa_audit_identifies_model3_no_action_control(tmp_path) -> None:
+    adapter = tmp_path / "run" / "qwen_vision_online_lora" / "online"
+    adapter.mkdir(parents=True)
+    (adapter / "adapter_model.safetensors").write_bytes(b"model3-adapter")
+    (tmp_path / "run" / "final_metrics.json").write_text(
+        '{"config":{"action_separation_weight":0.25,'
+        '"variance_regularization_weight":0.05,'
+        '"covariance_regularization_weight":0.05,'
+        '"training_action_assignment":"no_action"},'
+        '"steps":7667,"stop_reason":"maximum_steps_completed",'
+        '"final_validation":{"four_way_accuracy":0.25}}',
+        encoding="utf-8",
+    )
+    audit = source_jepa_audit(adapter)
+    assert audit["source"] == "no-action JEPA control"
+    assert audit["uses_correct_action_information"] is False
+    assert audit["training_action_assignment"] == "no_action"

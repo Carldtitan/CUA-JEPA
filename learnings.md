@@ -1305,3 +1305,11 @@ The following work is not complete:
 - **Simple explanation:** The JEPA predictor learned screen changes. Qwen still needs a defined way to use that knowledge when it chooses an action.
 - **Correction:** Treat SFT and JEPA-to-Qwen transfer as separate design decisions. State which JEPA component enters the policy before training. Compare the low-cost Qwen-LoRA transfer path with an explicit V-JEPA 2 policy connection.
 - **Status:** Open architecture decision. AgentNet ingestion continues because the same supervised subset can test either transfer path.
+
+### 149. The first Model 3 implementation used shuffled actions
+
+- **Technical term:** Control-condition mismatch.
+- **Mistake:** The first Model 3 code paired each future screen with a different real action.
+- **Simple explanation:** False action labels can damage the model. They do not measure simple GUI exposure cleanly.
+- **Correction:** Follow the agreed experiment file. Give all four branches the same fixed `NO_ACTION` input. Keep the data, architecture, steps, loss, and compute matched with Model 4.
+- **Status:** Corrected before any Model 3 GPU run. Unit tests enforce the fixed `NO_ACTION` input.

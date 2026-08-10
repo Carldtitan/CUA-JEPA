@@ -63,7 +63,11 @@ hf_cache_volume = modal.Volume.from_name(HF_CACHE_VOLUME_NAME, create_if_missing
         "/root/.cache/huggingface": hf_cache_volume,
     },
 )
-def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) -> dict:
+def check_sft_model_setup(
+    variant: str = "model4",
+    max_pixels: int = 1_048_576,
+    model3_adapter_path: str = "",
+) -> dict:
     import torch
     from PIL import Image
 
@@ -77,7 +81,13 @@ def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) 
     )
 
     config = SFTTrainConfig(max_pixels=max_pixels, min_pixels=65_536)
-    jepa_path = Path(JEPA_ADAPTER_PATH) if variant == "model4" else None
+    jepa_path = None
+    if variant == "model4":
+        jepa_path = Path(JEPA_ADAPTER_PATH)
+    elif variant == "model3":
+        if not model3_adapter_path:
+            raise ValueError("Model 3 setup requires --model3-adapter-path")
+        jepa_path = Path(model3_adapter_path)
     processor, model, source_sha256 = _configure_model(config, variant, jepa_path)
     model.to("cuda").train()
     vision_parameters, language_parameters = _parameter_groups(model)
@@ -159,11 +169,18 @@ def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) 
         "/root/.cache/huggingface": hf_cache_volume,
     },
 )
-def run_sft_transfer(variant: str, mode: str, seed: int = 20260810) -> dict:
+def run_sft_transfer(
+    variant: str,
+    mode: str,
+    seed: int = 20260810,
+    model3_adapter_path: str = "",
+) -> dict:
     from cua_jepa.train_sft import SFTTrainConfig, train_policy_sft
 
-    if variant not in {"model2", "model4"}:
-        raise ValueError("variant must be 'model2' or 'model4'")
+    if variant not in {"model2", "model3", "model4"}:
+        raise ValueError("variant must be 'model2', 'model3', or 'model4'")
+    if variant == "model3" and not model3_adapter_path:
+        raise ValueError("Model 3 SFT requires --model3-adapter-path")
     config = SFTTrainConfig(seed=seed)
     if mode == "smoke":
         config.max_steps = 2
@@ -199,7 +216,11 @@ def run_sft_transfer(variant: str, mode: str, seed: int = 20260810) -> dict:
         dataset_root=DATASET_ROOT,
         output_dir=output_path,
         variant=variant,
-        jepa_adapter_path=JEPA_ADAPTER_PATH if variant == "model4" else None,
+        jepa_adapter_path=(
+            JEPA_ADAPTER_PATH
+            if variant == "model4"
+            else model3_adapter_path if variant == "model3" else None
+        ),
         config=config,
         persist_outputs=training_volume.commit,
     )
@@ -214,11 +235,16 @@ def main(
     mode: str = "smoke",
     seed: int = 20260810,
     max_pixels: int = 1_048_576,
+    model3_adapter_path: str = "",
 ) -> None:
     if mode == "setup":
         if variant == "both":
             raise ValueError("Setup mode requires one variant")
-        result = check_sft_model_setup.remote(variant=variant, max_pixels=max_pixels)
+        result = check_sft_model_setup.remote(
+            variant=variant,
+            max_pixels=max_pixels,
+            model3_adapter_path=model3_adapter_path,
+        )
     elif variant == "both":
         calls = {
             name: run_sft_transfer.spawn(variant=name, mode=mode, seed=seed)
@@ -226,5 +252,10 @@ def main(
         }
         result = {name: call.get() for name, call in calls.items()}
     else:
-        result = run_sft_transfer.remote(variant=variant, mode=mode, seed=seed)
+        result = run_sft_transfer.remote(
+            variant=variant,
+            mode=mode,
+            seed=seed,
+            model3_adapter_path=model3_adapter_path,
+        )
     print(json.dumps(result, indent=2, sort_keys=True))

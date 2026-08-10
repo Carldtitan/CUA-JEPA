@@ -117,9 +117,17 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
         raise RuntimeError(f"The source JEPA metrics are missing: {final_metrics_path}")
     metrics = json.loads(final_metrics_path.read_text(encoding="utf-8"))
     config = metrics["config"]
+    action_assignment = config.get("training_action_assignment", "correct")
+    correct_actions = action_assignment == "correct"
     return {
-        "source": "action-conditioned JEPA",
-        "objective": "latent regression plus action separation and anti-collapse regularization",
+        "source": (
+            "action-conditioned JEPA" if correct_actions else "no-action JEPA control"
+        ),
+        "objective": (
+            "latent regression plus action separation and anti-collapse regularization"
+            if correct_actions
+            else "matched latent regression, action-separation, and anti-collapse objective with one fixed NO_ACTION input"
+        ),
         "source_run_directory": run_root.name,
         "final_metrics_sha256": sha256_file(final_metrics_path),
         "adapter_model_sha256": sha256_file(
@@ -131,6 +139,8 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
             "four_way_accuracy"
         ),
         "training_config": config,
+        "training_action_assignment": action_assignment,
+        "uses_correct_action_information": correct_actions,
         "uses_action_separation": float(config.get("action_separation_weight", 0.0)) > 0.0,
         "uses_variance_regularization": float(
             config.get("variance_regularization_weight", 0.0)
@@ -323,9 +333,9 @@ def _configure_model(config: SFTTrainConfig, variant: str, jepa_adapter_path: Pa
             model.model.visual, vision_lora, adapter_name="vision_sft"
         )
         source_adapter_sha256 = None
-    elif variant == "model4":
+    elif variant in {"model3", "model4"}:
         if jepa_adapter_path is None or not (jepa_adapter_path / "adapter_model.safetensors").is_file():
-            raise RuntimeError("The Model 4 JEPA vision adapter is missing")
+            raise RuntimeError(f"The {variant} JEPA vision adapter is missing")
         source_adapter_sha256 = sha256_file(jepa_adapter_path / "adapter_model.safetensors")
         model.model.visual = PeftModel.from_pretrained(
             model.model.visual,
@@ -334,7 +344,7 @@ def _configure_model(config: SFTTrainConfig, variant: str, jepa_adapter_path: Pa
             is_trainable=True,
         )
     else:
-        raise ValueError("variant must be 'model2' or 'model4'")
+        raise ValueError("variant must be 'model2', 'model3', or 'model4'")
 
     torch.manual_seed(config.language_init_seed)
     language_lora = LoraConfig(

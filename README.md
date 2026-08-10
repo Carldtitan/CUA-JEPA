@@ -204,6 +204,8 @@ This test asks whether the saved Model 4 JEPA vision adapter improves next-actio
 
 Model 2 starts from the pinned base Qwen model. Model 4 starts from the same Qwen model plus the saved JEPA vision adapter. Both models get a new language LoRA adapter. Both models use the same 2,000 training examples, the same order, and the same 250 validation examples.
 
+Model 3 is the no-action control. It starts from the same pinned Qwen revision as Model 4. Its JEPA stage uses the same transitions, order, architecture, steps, and loss. Every action is replaced with one fixed `NO_ACTION` input. This isolates GUI transition exposure from correct action information.
+
 AgentNet is used only for supervised next-action SFT. The JEPA stage uses the custom transition data.
 
 Use detached Modal runs. A detached run continues if the local network disconnects.

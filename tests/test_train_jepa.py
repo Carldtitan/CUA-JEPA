@@ -13,6 +13,7 @@ from cua_jepa.train_jepa import (
     adapter_pair_max_difference,
     approved_vision_parameters,
     copy_online_adapter_to_target,
+    training_actions_for_bundle,
     validate_dataset_assignments,
 )
 
@@ -95,3 +96,32 @@ def test_dataset_assignment_rejects_split_or_image_leakage() -> None:
     ]
     with pytest.raises(RuntimeError, match="exact screenshots"):
         validate_dataset_assignments(train, leaked)
+
+
+def test_model3_action_control_uses_one_fixed_no_action_input() -> None:
+    branches = [
+        TransitionSample(
+            bundle_id="bundle-1",
+            app="app",
+            split="train",
+            branch_index=index,
+            action={"kind": f"action-{index}"},
+            current_webp=b"current",
+            future_webp=f"future-{index}".encode(),
+            changed_pixel_fraction=0.1,
+        )
+        for index in range(4)
+    ]
+    correct = training_actions_for_bundle(branches, JEPATrainConfig())
+    assert correct == [branch.action for branch in branches]
+
+    config = JEPATrainConfig(training_action_assignment="no_action")
+    first = training_actions_for_bundle(branches, config)
+    second = training_actions_for_bundle(branches, config)
+    assert first == second
+    assert first == [
+        {"kind": "NO_ACTION", "spatial_active": False},
+        {"kind": "NO_ACTION", "spatial_active": False},
+        {"kind": "NO_ACTION", "spatial_active": False},
+        {"kind": "NO_ACTION", "spatial_active": False},
+    ]

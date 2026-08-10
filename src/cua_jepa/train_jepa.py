@@ -82,6 +82,7 @@ class JEPATrainConfig:
     validation_evaluation_bundles: int = 0
     action_separation_weight: float = 0.0
     action_separation_temperature: float = 0.1
+    training_action_assignment: str = "correct"
     changed_region_loss_weight: float = 0.8
     global_loss_weight: float = 0.2
     delta_direction_weight: float = 0.75
@@ -265,6 +266,22 @@ def _action_embedding(
     action_encoder: ActionEncoder, actions: list[dict[str, Any]], device: torch.device
 ) -> torch.Tensor:
     return action_encoder(*actions_to_tensors(actions, device=device))
+
+
+def training_actions_for_bundle(
+    branches: list[TransitionSample], config: JEPATrainConfig
+) -> list[dict[str, Any]]:
+    """Return correct actions or the fixed Model 3 no-action control."""
+    actions = [branch.action for branch in branches]
+    if config.training_action_assignment == "correct":
+        return actions
+    if config.training_action_assignment != "no_action":
+        raise ValueError(
+            "training_action_assignment must be 'correct' or 'no_action'"
+        )
+    if len(actions) != 4:
+        raise ValueError("No-action training requires four branches")
+    return [{"kind": "NO_ACTION", "spatial_active": False} for _ in actions]
 
 
 @torch.no_grad()
@@ -897,7 +914,7 @@ def train_model4_jepa(
                         )
                     )
             _set_adapter(vision, "online")
-            actions = [branch.action for branch in branches]
+            actions = training_actions_for_bundle(branches, config)
             action_embeddings = _action_embedding(action_encoder, actions, device)
             spatial_actions = action_spatial_features(actions, current_grid[0], device)
             predicted_deltas = predictor(current_tokens, action_embeddings, spatial_actions)

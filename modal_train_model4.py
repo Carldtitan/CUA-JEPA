@@ -210,9 +210,12 @@ def run_model4_training(
         config.evaluation_bundles = 1
         config.validation_evaluation_bundles = 0
         config.log_every = 1
-    elif mode == "lora_smoke":
+    elif mode in {"lora_smoke", "model3_lora_smoke"}:
         config.train_qwen_lora = True
         config.action_separation_weight = 0.25
+        if mode == "model3_lora_smoke":
+            config.training_action_assignment = "no_action"
+            config.stop_on_collapse = False
         config.max_steps = 2
         config.max_train_transitions = 8
         config.max_validation_transitions = 8
@@ -250,9 +253,12 @@ def run_model4_training(
         config.validation_evaluation_bundles = 0
         config.action_separation_weight = 0.0 if mode == "pure" else 0.25
         config.log_every = 25
-    elif mode == "model4_full":
+    elif mode in {"model4_full", "model3_full"}:
         config.train_qwen_lora = True
         config.action_separation_weight = 0.25
+        if mode == "model3_full":
+            config.training_action_assignment = "no_action"
+            config.stop_on_collapse = False
         config.max_steps = 7_667
         config.max_train_transitions = 30_668
         config.max_validation_transitions = 2_000
@@ -270,22 +276,32 @@ def run_model4_training(
         config.log_every = 25
     elif mode != "pilot":
         raise ValueError(
-            "mode must be 'smoke', 'lora_smoke', 'pilot', 'quick', 'pure', "
-            "'separation', 'stage2', or 'model4_full'"
+            "mode must be 'smoke', 'lora_smoke', 'model3_lora_smoke', 'pilot', "
+            "'quick', 'pure', 'separation', 'stage2', 'model3_full', or 'model4_full'"
         )
     seed_label = f"-seed{config.seed}"
-    run_id = datetime.now(timezone.utc).strftime(f"model4-{mode}{seed_label}-%Y%m%dT%H%M%SZ")
+    model_label = "model3" if mode.startswith("model3_") else "model4"
+    run_id = datetime.now(timezone.utc).strftime(
+        f"{model_label}-{mode}{seed_label}-%Y%m%dT%H%M%SZ"
+    )
     output_dir = Path("/training") / run_id
     train_paths = ["/opt/cua-jepa/train.tar"]
     validation_paths = ["/opt/cua-jepa/validation.tar"]
-    if mode in {"quick", "pure", "separation", "stage2", "lora_smoke"}:
+    if mode in {
+        "quick",
+        "pure",
+        "separation",
+        "stage2",
+        "lora_smoke",
+        "model3_lora_smoke",
+    }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
         ]
         validation_paths = [
             str(path) for path in sorted(Path("/dataset/model4-stage2/validation").glob("*.tar"))
         ]
-    elif mode == "model4_full":
+    elif mode in {"model4_full", "model3_full"}:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
         ]
@@ -303,6 +319,7 @@ def run_model4_training(
     run_metadata = {
         "run_id": run_id,
         "run_mode": mode,
+        "model_variant": model_label,
         "git_commit": git_commit,
         "dataset_id": "clean-20260808-v7",
         "source_dataset_audit_sha256": source_dataset_audit_sha256,
