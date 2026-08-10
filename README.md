@@ -210,10 +210,8 @@ Use detached Modal runs. A detached run continues if the local network disconnec
 
 ```powershell
 python -m modal run --detach modal_prepare_sft.py --mode ingest
-python -m modal run --detach modal_train_sft.py --variant model4 --mode smoke
-python -m modal run --detach modal_train_sft.py --variant model2 --mode smoke
-python -m modal run --detach modal_train_sft.py --variant model4 --mode pilot
-python -m modal run --detach modal_train_sft.py --variant model2 --mode pilot
+python -m modal run --detach modal_train_sft.py --variant both --mode smoke
+python -m modal run --detach modal_train_sft.py --variant both --mode pilot
 ```
 
 Do not start the full pair until both pilots pass their data, gradient, generation, and artifact checks.

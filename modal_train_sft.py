@@ -216,7 +216,15 @@ def main(
     max_pixels: int = 1_048_576,
 ) -> None:
     if mode == "setup":
+        if variant == "both":
+            raise ValueError("Setup mode requires one variant")
         result = check_sft_model_setup.remote(variant=variant, max_pixels=max_pixels)
+    elif variant == "both":
+        calls = {
+            name: run_sft_transfer.spawn(variant=name, mode=mode, seed=seed)
+            for name in ("model2", "model4")
+        }
+        result = {name: call.get() for name, call in calls.items()}
     else:
         result = run_sft_transfer.remote(variant=variant, mode=mode, seed=seed)
     print(json.dumps(result, indent=2, sort_keys=True))
