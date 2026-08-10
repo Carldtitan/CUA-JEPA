@@ -1,11 +1,14 @@
 from pathlib import Path
 
 import torch
+from PIL import Image, ImageDraw
 
 from cua_jepa.train_vjepa2 import (
     EncodedBundle,
     balanced_training_epoch,
     bundle_bootstrap_ci95,
+    gui_image_video,
+    letterbox_gui_image,
     pilot_success,
     select_balanced_encoded_bundles,
     validate_vjepa2_pilot_artifacts,
@@ -23,6 +26,20 @@ def _bundle(bundle_id: str, app: str) -> EncodedBundle:
         targets=torch.zeros(4, 256, 1024),
         target_weights=torch.ones(4, 256),
     )
+
+
+def test_letterbox_keeps_both_edges_of_wide_gui() -> None:
+    image = Image.new("RGB", (128, 72), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 7, 71), fill="red")
+    draw.rectangle((120, 0, 127, 71), fill="blue")
+    result = letterbox_gui_image(image)
+    assert result.size == (256, 256)
+    assert result.getpixel((2, 128))[0] > 200
+    assert result.getpixel((253, 128))[2] > 200
+    video = gui_image_video(image)
+    assert video.shape == (2, 3, 256, 256)
+    assert torch.equal(video[0], video[1])
 
 
 def test_select_balanced_encoded_bundles_round_robins_apps() -> None:

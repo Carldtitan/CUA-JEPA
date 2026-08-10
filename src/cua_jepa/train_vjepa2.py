@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 import torch
+from PIL import Image
 from torch.nn.utils import clip_grad_norm_
 
 from cua_jepa.jepa_data import (
@@ -109,14 +110,33 @@ def _action_embedding(
     return action_encoder(kinds, numeric, text_bytes, text_lengths)
 
 
-def _as_video(image) -> torch.Tensor:
-    array = np.asarray(image, dtype=np.uint8).copy()
+def letterbox_gui_image(image: Image.Image, size: int = 256) -> Image.Image:
+    """Fit a complete GUI screenshot into a square without cropping it."""
+
+    source = image.convert("RGB")
+    scale = min(size / source.width, size / source.height)
+    resized = source.resize(
+        (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
+        resample=Image.Resampling.LANCZOS,
+    )
+    result = Image.new("RGB", (size, size), (124, 116, 104))
+    result.paste(resized, ((size - resized.width) // 2, (size - resized.height) // 2))
+    return result
+
+
+def gui_image_video(image: Image.Image) -> torch.Tensor:
+    array = np.asarray(letterbox_gui_image(image), dtype=np.uint8).copy()
     frame = torch.from_numpy(array).permute(2, 0, 1)
     return torch.stack((frame, frame), dim=0)
 
 
 def encode_screen_batch(images, processor, encoder, device: torch.device) -> torch.Tensor:
-    inputs = processor([_as_video(image) for image in images], return_tensors="pt").to(device)
+    inputs = processor(
+        [gui_image_video(image) for image in images],
+        return_tensors="pt",
+        do_resize=False,
+        do_center_crop=False,
+    ).to(device)
     with torch.inference_mode():
         output = encoder(**inputs, skip_predictor=True)
     features = output.last_hidden_state
@@ -149,11 +169,12 @@ def encode_bundles(
         for index, branches in enumerate(chunk):
             start = index * 5
             current_image, future_images = decoded[index]
+            current_mask_image = letterbox_gui_image(current_image)
             weights = torch.stack(
                 [
                     change_patch_weights(
-                        current_image,
-                        future,
+                        current_mask_image,
+                        letterbox_gui_image(future),
                         grid,
                         torch.device("cpu"),
                         changed_weight=config.changed_patch_weight,

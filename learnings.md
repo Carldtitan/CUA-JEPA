@@ -813,6 +813,14 @@ The local source metrics are:
 - **Correction:** Shuffle each application separately. Sample each application equally and repeat smaller application pools when needed.
 - **Status:** Corrected before V-JEPA 2 training. The balanced sampling regression test passes.
 
+### 94. The default V-JEPA 2 processor cropped wide GUI screenshots
+
+- **Technical term:** Aspect-ratio crop and spatial-mask misalignment.
+- **Mistake:** The default processor resized a wide screenshot by its short edge and then took a 256-pixel center crop.
+- **Simple explanation:** The encoder could lose controls on the left and right sides. The changed-region mask also used a different layout.
+- **Correction:** Fit the complete screenshot into a 256-by-256 square with neutral padding. Disable the processor resize and crop. Use the same fitted image for the changed-region mask.
+- **Status:** Corrected locally before the full pilot. Local and Modal regression checks are in progress.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:

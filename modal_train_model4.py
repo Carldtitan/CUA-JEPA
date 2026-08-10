@@ -128,11 +128,11 @@ def check_processor() -> dict:
     },
 )
 def check_vjepa2_encoder() -> dict:
-    import numpy as np
     import torch
     from transformers import AutoModel, AutoVideoProcessor
 
     from cua_jepa.jepa_data import load_transition_tar
+    from cua_jepa.train_vjepa2 import gui_image_video
 
     model_id = "facebook/vjepa2-vitl-fpc64-256"
     paths = sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
@@ -143,13 +143,13 @@ def check_vjepa2_encoder() -> dict:
     model = AutoModel.from_pretrained(model_id, dtype=torch.bfloat16)
     model.requires_grad_(False).eval().to("cuda")
 
-    def as_video(image) -> torch.Tensor:
-        array = np.asarray(image, dtype=np.uint8).copy()
-        frame = torch.from_numpy(array).permute(2, 0, 1)
-        return torch.stack((frame, frame), dim=0)
-
     def encode_many(images) -> tuple[torch.Tensor, dict[str, list[int]]]:
-        inputs = processor([as_video(image) for image in images], return_tensors="pt")
+        inputs = processor(
+            [gui_image_video(image) for image in images],
+            return_tensors="pt",
+            do_resize=False,
+            do_center_crop=False,
+        )
         input_shapes = {key: list(value.shape) for key, value in inputs.items()}
         inputs = inputs.to("cuda")
         with torch.inference_mode():
@@ -362,8 +362,8 @@ def run_vjepa2_gui_pilot(
 ) -> dict:
     from cua_jepa.train_vjepa2 import VJEPA2PilotConfig, train_vjepa2_gui_pilot
 
-    if mode not in {"smoke", "pilot"}:
-        raise ValueError("V-JEPA 2 mode must be 'smoke' or 'pilot'")
+    if mode not in {"smoke", "pure", "separation"}:
+        raise ValueError("V-JEPA 2 mode must be 'smoke', 'pure', or 'separation'")
     config = VJEPA2PilotConfig()
     if seed:
         config.seed = seed
@@ -378,6 +378,10 @@ def run_vjepa2_gui_pilot(
         config.log_every = 1
         config.approved_cost_limit_usd = 0.50
         config.max_runtime_seconds = 20 * 60
+    elif mode == "pure":
+        config.action_separation_weight = 0.0
+    else:
+        config.action_separation_weight = 0.25
 
     train_paths = [str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))]
     validation_paths = [
@@ -449,7 +453,11 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     except (OSError, subprocess.CalledProcessError):
         git_commit = "unknown"
     source_dataset_audit_sha256 = hashlib.sha256(AUDIT_REPORT.read_bytes()).hexdigest()
-    if mode in {"vjepa2_gui_smoke", "vjepa2_gui_pilot"}:
+    if mode in {
+        "vjepa2_gui_smoke",
+        "vjepa2_gui_pure",
+        "vjepa2_gui_separation",
+    }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(
             vjepa2_mode,
