@@ -19,6 +19,10 @@ def test_normalizes_supported_actions_without_executing_code() -> None:
         "action": "hotkey",
         "keys": ["ctrl", "s"],
     }
+    assert normalize_pyautogui_action("pyautogui.hotkey(['ctrl', 'u'])") == {
+        "action": "hotkey",
+        "keys": ["ctrl", "u"],
+    }
     assert canonical_action(normalize_pyautogui_action("pyautogui.write('hello')")) == (
         '{"action":"write","text":"hello"}'
     )
@@ -65,6 +69,19 @@ def test_filters_bad_steps_and_builds_short_history() -> None:
     assert len(candidates) == 3
     assert candidates[0].history == ()
     assert len(candidates[-1].history) == 2
+
+
+def test_accepts_official_quality_labels_and_null_feedback() -> None:
+    first, first_metadata = _trajectory("ubuntu-good", "Ubuntu")
+    first_metadata["verify_feedback"] = {"quality": "good"}
+    second, second_metadata = _trajectory("win-null", "Windows")
+    second_metadata["verify_feedback"] = None
+    candidates = candidate_examples(
+        [first, second],
+        {"ubuntu-good": first_metadata, "win-null": second_metadata},
+        "source.jsonl",
+    )
+    assert len(candidates) == 8
 
 
 def test_split_is_exact_deterministic_and_task_disjoint() -> None:

@@ -118,7 +118,10 @@ def normalize_pyautogui_action(code: str) -> dict[str, Any]:
             raise ValueError("press requires a key")
         action["keys"] = list(keys) if isinstance(keys, (list, tuple)) else [str(keys)]
     elif name == "hotkey":
-        action["keys"] = [str(value) for value in positional]
+        if len(positional) == 1 and isinstance(positional[0], (list, tuple)):
+            action["keys"] = [str(value) for value in positional[0]]
+        else:
+            action["keys"] = [str(value) for value in positional]
         positional.clear()
 
     for key in ("button", "clicks", "interval", "duration"):
@@ -153,7 +156,8 @@ def candidate_examples(
             continue
         if float(trajectory.get("alignment_score", 0) or 0) < 6:
             continue
-        if meta.get("verify_feedback", {}).get("quality") not in {None, "ok"}:
+        verify_feedback = meta.get("verify_feedback") or {}
+        if verify_feedback.get("quality") not in {None, "ok", "good"}:
             continue
         if meta.get("task_description_alignment") not in {None, "High Alignment"}:
             continue

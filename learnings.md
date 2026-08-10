@@ -1129,3 +1129,19 @@ The following work is not complete:
 - **Simple explanation:** The local command stopped while it tried to print text. The remote job did not start.
 - **Correction:** Set `PYTHONUTF8=1` for Modal commands on this Windows system.
 - **Status:** Corrected. No data or GPU run was affected.
+
+### 127. The first AgentNet filter rejected the Ubuntu quality label
+
+- **Technical term:** Source taxonomy mismatch.
+- **Mistake:** The filter accepted the verified quality label `ok`. The official Ubuntu rows use `good`.
+- **Simple explanation:** The labels mean the same useful result, but the words are different. The filter rejected all Ubuntu examples.
+- **Correction:** Accept both official labels. Keep operating-system balance in the audit.
+- **Status:** Corrected before image ingestion or SFT.
+
+### 128. The first AgentNet filter did not accept null feedback
+
+- **Technical term:** Nullable metadata field.
+- **Mistake:** The parser assumed that `verify_feedback` was always an object. Some official rows contain `null`.
+- **Simple explanation:** The parser tried to read a field from an empty value and stopped.
+- **Correction:** Treat `null` as missing feedback. Keep the other task and step quality checks.
+- **Status:** Corrected before image ingestion or SFT.
