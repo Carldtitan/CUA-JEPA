@@ -18,7 +18,7 @@ ROOT = Path(__file__).parents[1]
 DEFAULT_RUN_ID = "model4-stage2-20260810T001315Z"
 
 
-def main(run_id: str, force: bool = False) -> None:
+def main(run_id: str, force: bool = False, metadata_only: bool = False) -> None:
     remote_root = f"/{run_id}"
     local_root = ROOT / "artifacts" / run_id
     volume = modal.Volume.from_name("cua-jepa-training-v1")
@@ -30,6 +30,8 @@ def main(run_id: str, force: bool = False) -> None:
         if entry.type == 2:  # directory
             continue
         relative = Path(entry.path).relative_to(run_id)
+        if metadata_only and relative.suffix not in {".json", ".jsonl"}:
+            continue
         destination = local_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not force and destination.is_file() and destination.stat().st_size == entry.size:
@@ -57,5 +59,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--metadata-only", action="store_true")
     arguments = parser.parse_args()
-    main(arguments.run_id, arguments.force)
+    main(arguments.run_id, arguments.force, arguments.metadata_only)

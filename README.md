@@ -8,6 +8,8 @@ The project learning log records mistakes, corrections, evidence, and open limit
 
 The full-run measurement plan is in [full_run_observability.md](full_run_observability.md).
 
+The observability gate passed a two-step Modal test at commit `27af5ff`. The run ID was `model4-lora_smoke-seed20260809-20260810T052238Z`.
+
 ## Dataset milestone
 
 The final synthetic dataset is in `data/synthetic/clean-20260808-v7/full`.

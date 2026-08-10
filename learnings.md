@@ -618,7 +618,56 @@ The local source metrics are:
 - **Mistake:** The full run could start without per-bundle records, checkpoint recovery, gradient statistics, or a cost record.
 - **Simple explanation:** A final score cannot explain when, why, or how training changed.
 - **Correction:** Implement the measurements in `full_run_observability.md` before full training.
-- **Status:** Open and required before the next full run.
+- **Status:** Fixed. The complete path passed the two-step observability smoke test.
+
+### 70. An observability checklist is not an observability implementation
+
+- **Technical term:** Specification-implementation gap.
+- **Mistake:** We wrote the metrics that we wanted, but the training code did not yet save all of them.
+- **Simple explanation:** A document cannot prove that the run creates the required files.
+- **Correction:** Implement each metric in the training loop. Add a strict artifact validator and a real Modal test.
+- **Status:** Fixed. The final smoke run produced and validated all required artifact types.
+
+### 71. The first observability smoke test missed the Modal app ID
+
+- **Technical term:** Incomplete run provenance.
+- **Mistake:** The run saved a Modal task ID but stored `null` for the Modal app ID.
+- **Simple explanation:** A task ID alone does not identify the complete dashboard run.
+- **Correction:** Read the hydrated Modal app ID from the app object. Make the validator reject missing run IDs.
+- **Status:** Fixed and confirmed in the final smoke run.
+
+### 72. File presence and file size did not prove checkpoint integrity
+
+- **Technical term:** Artifact-integrity validation.
+- **Mistake:** The first validator accepted checkpoint files without loading them.
+- **Simple explanation:** One downloaded checkpoint had the expected size but could not be opened.
+- **Correction:** Load every checkpoint, optimizer state, adapter, and JEPA head file during validation.
+- **Status:** Fixed. The remote run now validates its own artifacts before success.
+
+### 73. Checkpoint downloads were not atomic
+
+- **Technical term:** Atomic file replacement.
+- **Mistake:** A stopped download could leave a partial destination file with a normal-looking size.
+- **Simple explanation:** A later resume could mistake the broken file for a complete file.
+- **Correction:** Download to a `.part` file. Check its byte count. Replace the destination only after completion.
+- **Status:** Fixed in the Modal artifact downloader.
+
+### 74. The observability system has its own time cost
+
+- **Technical term:** Instrumentation overhead.
+- **Mistake:** We did not separate training time from checkpoint and volume-save time.
+- **Simple explanation:** Detailed records can make a run slower even when model training is fast.
+- **Evidence:** The final smoke test used about `1.78` seconds for training compute and `18.32` seconds for volume persistence.
+- **Correction:** Track data, model, evaluation, checkpoint, persistence, and training time separately.
+- **Status:** Fixed. A longer timing test is still useful before the full run.
+
+### 75. Artifact validation must happen before a run reports success
+
+- **Technical term:** In-run artifact validation.
+- **Mistake:** Local validation happened only after the first run had already reported success.
+- **Simple explanation:** A remote run could look successful while its saved files were incomplete.
+- **Correction:** Validate all remote artifacts inside the Modal function before the function returns success.
+- **Status:** Fixed and confirmed by the final smoke run.
 
 ## Current corrections in the training code
 
@@ -651,6 +700,12 @@ The full Model 4 code adds these safeguards:
 8. Require the exact full training and validation counts.
 9. Reject bundle or exact screenshot overlap between training and validation.
 10. Keep the test split out of the Modal training paths.
+11. Save run, package, GPU, data, and parameter identity.
+12. Save all loss, gradient, memory, speed, and cost records.
+13. Evaluate fixed training and validation bundles at planned steps.
+14. Save one record for each evaluated bundle.
+15. Save recoverable checkpoints with optimizer and random states.
+16. Load and validate all artifacts before reporting success.
 
 ## Open work
 
@@ -664,7 +719,6 @@ The following work is not complete:
 6. Collect more non-search typing states.
 7. Improve or rebalance scroll transitions.
 8. Test on real, unseen software.
-9. Implement the full-run measurement plan.
-10. Rename the Modal app so that pilot and full runs are clear.
-11. Get new user approval for the exact full-run settings.
-12. Run full Model 4 only after these checks pass.
+9. Measure observability overhead in a longer timing pilot.
+10. Get new user approval for the exact full-run settings.
+11. Run full Model 4 only after these checks pass.

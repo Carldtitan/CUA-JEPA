@@ -4,6 +4,22 @@ Do not start the paid full run until the required items in this plan exist.
 
 Observability means enough saved information to explain what happened during training.
 
+## Implementation status
+
+The complete observability path passed a two-step Modal test on 2026-08-09.
+
+- Git commit: `27af5ff`;
+- run ID: `model4-lora_smoke-seed20260809-20260810T052238Z`;
+- Modal app ID: `ap-kUbXNrpfhI5KkF82CGjmGS`;
+- training records: 2;
+- evaluation records: 8;
+- per-bundle records: 12;
+- resource records: 3;
+- loadable checkpoints: 2;
+- remote artifact validation: passed.
+
+The test loaded each checkpoint, adapter, and JEPA head file before it reported success.
+
 ## 1. Run identity
 
 Save these values before training:
@@ -212,6 +228,7 @@ The final run directory must contain:
 - `evaluation_checkpoints.jsonl`;
 - `evaluation_bundles.jsonl`;
 - `resource_usage.jsonl`;
+- `artifact_validation.json`;
 - `final_metrics.json`;
 - online LoRA weights;
 - target LoRA weights;
