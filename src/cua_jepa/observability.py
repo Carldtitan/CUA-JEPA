@@ -313,6 +313,28 @@ def validate_run_artifacts(
         "run manifest",
     )
     _require_keys(
+        manifest["run_metadata"],
+        {
+            "run_id",
+            "run_mode",
+            "git_commit",
+            "dataset_id",
+            "source_dataset_audit_sha256",
+            "modal_app_name",
+            "modal_app_id",
+            "modal_task_id",
+        },
+        "run metadata",
+    )
+    for key in (
+        "git_commit",
+        "source_dataset_audit_sha256",
+        "modal_app_id",
+        "modal_task_id",
+    ):
+        if manifest["run_metadata"][key] in (None, "", "unknown"):
+            raise ValueError(f"Run metadata has no valid {key}")
+    _require_keys(
         dataset,
         {
             "train_transitions",

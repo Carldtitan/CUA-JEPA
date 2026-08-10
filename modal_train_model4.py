@@ -257,7 +257,8 @@ def run_model4_training(
         "dataset_id": "clean-20260808-v7",
         "source_dataset_audit_sha256": source_dataset_audit_sha256,
         "modal_app_name": APP_NAME,
-        "modal_app_id": os.environ.get("MODAL_APP_ID"),
+        "modal_app_id": app.app_id or os.environ.get("MODAL_APP_ID"),
+        "modal_task_id": os.environ.get("MODAL_TASK_ID"),
     }
     try:
         metrics = train_model4_jepa(

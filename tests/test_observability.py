@@ -68,7 +68,16 @@ def _build_fake_run(root: Path) -> None:
             "created_at_utc": "start",
             "completed_at_utc": "end",
             "config": {},
-            "run_metadata": {},
+            "run_metadata": {
+                "run_id": "run",
+                "run_mode": "smoke",
+                "git_commit": "commit",
+                "dataset_id": "dataset",
+                "source_dataset_audit_sha256": "audit",
+                "modal_app_name": "app",
+                "modal_app_id": "ap-123",
+                "modal_task_id": "ta-123",
+            },
             "cuda": {},
         },
     )
