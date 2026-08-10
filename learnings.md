@@ -899,7 +899,7 @@ The local source metrics are:
 - **Mistake:** Each predictor test ran the unchanged frozen V-JEPA 2 encoder on the same screens again.
 - **Simple explanation:** We paid for the same fixed calculation more than once.
 - **Correction:** Save frozen visual features with a data and encoder hash. Validate tensor counts and shapes before reuse.
-- **Status:** Corrected in code. The cache passed local checks and was saved in Modal. A reuse run is not yet complete.
+- **Status:** Corrected. Modal loaded the checked cache for the wider-predictor run. That run cost about $0.08 instead of about $0.23 to $0.28.
 
 ### 105. One seed made the separate-view method look better than it was
 
@@ -908,6 +908,14 @@ The local source metrics are:
 - **Simple explanation:** A different random start changed which action types worked best.
 - **Correction:** Run the same method with seed 20260812. Report the two-run mean and each action group.
 - **Status:** Corrected. The second seed reached 33.8% on clicks. The mean click score is 35.5%. The old method remains best overall.
+
+### 106. A larger tiled predictor did not improve general use
+
+- **Technical term:** Predictor capacity ablation.
+- **Mistake:** We suspected that the 384-wide, 6-layer predictor was too small for 512 visual tokens.
+- **Simple explanation:** A larger predictor learned the training screens better. It did not transfer better to Jira and Slack.
+- **Correction:** Test a 512-wide, 8-layer predictor with the same data, seed, features, and steps. Reject it if validation does not improve.
+- **Status:** Tested and rejected. It reached 38.2% overall and 36.0% on clicks. The smaller model reached 37.8% overall and 37.1% on clicks with the same seed.
 
 ## Current corrections in the training code
 
