@@ -1225,3 +1225,11 @@ The following work is not complete:
 - **Simple explanation:** The script could report a cost that was too low.
 - **Correction:** Use the higher Starter rates for the local safety estimate. Keep the four-hour runtime limit. Check the Modal billing page for the final charged cost.
 - **Status:** Corrected before SFT. The active CPU data job remains below the $40 total limit at its maximum runtime.
+
+### 139. The planned SFT image limit made interface text too small
+
+- **Technical term:** Visual token resolution.
+- **Mistake:** The first SFT plan limited each screenshot to 262,144 pixels. A 1920×1080 screenshot became about 683×384.
+- **Simple explanation:** Small button labels and menu text can become too small for the model to read.
+- **Correction:** Use a 1,048,576-pixel limit for SFT. A Model 4 forward and backward test used 12.74 GiB on an L4 with 24 GiB. The old limit used 6.70 GiB. Both Model 2 and Model 4 will use the same larger limit.
+- **Status:** Corrected before SFT. The larger setting passed the Modal GPU test.

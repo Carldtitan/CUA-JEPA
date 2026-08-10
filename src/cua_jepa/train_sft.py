@@ -33,7 +33,7 @@ class SFTTrainConfig:
     model_revision: str = "89644892e4d85e24eaac8bacfd4f463576704203"
     seed: int = 20260810
     language_init_seed: int = 20260813
-    max_pixels: int = 262_144
+    max_pixels: int = 1_048_576
     min_pixels: int = 65_536
     lora_rank: int = 8
     lora_alpha: int = 16

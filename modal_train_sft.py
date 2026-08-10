@@ -61,7 +61,7 @@ hf_cache_volume = modal.Volume.from_name(HF_CACHE_VOLUME_NAME, create_if_missing
         "/root/.cache/huggingface": hf_cache_volume,
     },
 )
-def check_sft_model_setup(variant: str = "model4") -> dict:
+def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) -> dict:
     import torch
     from PIL import Image
 
@@ -73,13 +73,13 @@ def check_sft_model_setup(variant: str = "model4") -> dict:
         make_training_inputs,
     )
 
-    config = SFTTrainConfig(max_pixels=65_536, min_pixels=65_536)
+    config = SFTTrainConfig(max_pixels=max_pixels, min_pixels=65_536)
     jepa_path = Path(JEPA_ADAPTER_PATH) if variant == "model4" else None
     processor, model, source_sha256 = _configure_model(config, variant, jepa_path)
     model.to("cuda").train()
     vision_parameters, language_parameters = _parameter_groups(model)
     image_path = Path("/tmp/sft-setup.webp")
-    Image.new("RGB", (256, 256), "white").save(image_path)
+    Image.new("RGB", (1920, 1080), "white").save(image_path)
     record = {
         "instruction": "Click the center of the screen.",
         "history": [],
@@ -90,6 +90,7 @@ def check_sft_model_setup(variant: str = "model4") -> dict:
     output.loss.backward()
     return {
         "variant": variant,
+        "max_pixels": max_pixels,
         "loss": float(output.loss.detach().item()),
         "vision_lora_parameters": sum(value.numel() for value in vision_parameters),
         "language_lora_parameters": sum(value.numel() for value in language_parameters),
@@ -165,9 +166,14 @@ def run_sft_transfer(variant: str, mode: str, seed: int = 20260810) -> dict:
 
 
 @app.local_entrypoint()
-def main(variant: str = "model4", mode: str = "smoke", seed: int = 20260810) -> None:
+def main(
+    variant: str = "model4",
+    mode: str = "smoke",
+    seed: int = 20260810,
+    max_pixels: int = 1_048_576,
+) -> None:
     if mode == "setup":
-        result = check_sft_model_setup.remote(variant=variant)
+        result = check_sft_model_setup.remote(variant=variant, max_pixels=max_pixels)
     else:
         result = run_sft_transfer.remote(variant=variant, mode=mode, seed=seed)
     print(json.dumps(result, indent=2, sort_keys=True))

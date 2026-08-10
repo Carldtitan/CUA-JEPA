@@ -15,6 +15,7 @@ def test_qwen_revision_and_small_lora_are_pinned() -> None:
     assert config.model_revision == "89644892e4d85e24eaac8bacfd4f463576704203"
     assert config.lora_rank == 8
     assert config.gradient_accumulation_steps == 4
+    assert config.max_pixels == 1_048_576
     assert config.initial_evaluation_examples == config.final_evaluation_examples == 250
     assert config.cpu_cost_per_core_second == 3.942e-5
     assert config.memory_cost_per_gib_second == 6.67e-6
