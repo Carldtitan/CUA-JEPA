@@ -1241,3 +1241,11 @@ The following work is not complete:
 - **Simple explanation:** A Wi-Fi loss can stop an app that is tied to the local command.
 - **Correction:** Keep the active job because restarting it would discard a large temporary download. Use `--detach` for all later smoke tests, pilots, and full runs.
 - **Status:** Partly corrected. The active data job is healthy but is still connected. All later commands will be detached.
+
+### 141. Four parallel downloads and a four-hour limit were too risky
+
+- **Technical term:** Ingestion throughput and timeout budget.
+- **Mistake:** The first complete ingestion job used four archive downloads and a four-hour function limit. The Windows/macOS source reached only 23 GiB after 44 minutes.
+- **Simple explanation:** The job was likely to stop before it could download and extract the full archive.
+- **Correction:** Keep the 750 completed Ubuntu images. Restart only the Windows/macOS source with eight downloads, an eight-hour hard limit, stalled-download retries, and detached mode.
+- **Status:** Corrected during ingestion. The incomplete 23 GiB temporary Windows download was discarded. Persistent Ubuntu data was not changed.
