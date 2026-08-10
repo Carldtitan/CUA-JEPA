@@ -135,5 +135,11 @@ def test_split_is_exact_deterministic_and_task_disjoint() -> None:
     assert audit["validation_examples"] == 24
     assert audit["task_overlap"] == 0
     assert audit["screenshot_overlap"] == 0
+    assert audit["exact_instruction_overlap"] == 0
+    assert audit["duplicate_example_ids"] == 0
+    assert audit["duplicate_screenshot_names"] == 0
+    assert audit["empty_instructions"] == 0
+    assert audit["target_action_mismatches"] == 0
+    assert audit["invalid_normalized_coordinates"] == 0
     assert set(audit["train_by_system"]) == set(systems)
     assert max(audit["train_by_system"].values()) - min(audit["train_by_system"].values()) <= 1

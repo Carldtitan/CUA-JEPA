@@ -337,6 +337,7 @@ def split_examples(
 def dataset_audit(train: Iterable[SFTExample], validation: Iterable[SFTExample]) -> dict[str, Any]:
     train_values = list(train)
     validation_values = list(validation)
+    all_values = train_values + validation_values
 
     def counts(values: list[SFTExample], field: str) -> dict[str, int]:
         result: dict[str, int] = defaultdict(int)
@@ -356,6 +357,24 @@ def dataset_audit(train: Iterable[SFTExample], validation: Iterable[SFTExample])
         "screenshot_overlap": len(
             {value.image_file for value in train_values}
             & {value.image_file for value in validation_values}
+        ),
+        "exact_instruction_overlap": len(
+            {value.instruction for value in train_values}
+            & {value.instruction for value in validation_values}
+        ),
+        "duplicate_example_ids": len(all_values)
+        - len({value.example_id for value in all_values}),
+        "duplicate_screenshot_names": len(all_values)
+        - len({value.image_file for value in all_values}),
+        "empty_instructions": sum(not value.instruction.strip() for value in all_values),
+        "target_action_mismatches": sum(
+            value.target != canonical_action(value.action) for value in all_values
+        ),
+        "invalid_normalized_coordinates": sum(
+            not (0.0 <= float(value.action["x"]) <= 1.0)
+            or not (0.0 <= float(value.action["y"]) <= 1.0)
+            for value in all_values
+            if "x" in value.action or "y" in value.action
         ),
         "train_by_system": counts(train_values, "system"),
         "validation_by_system": counts(validation_values, "system"),
