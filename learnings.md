@@ -859,7 +859,7 @@ The local source metrics are:
 - **Mistake:** The image moved into a padded square, but pointer coordinates stayed in the original wide-screen coordinate frame.
 - **Simple explanation:** A click near the top of the real screen pointed into the top padding in the model input.
 - **Correction:** Transform click and type coordinates into the same letterboxed coordinate frame before making the spatial heatmap.
-- **Status:** Corrected locally. All 52 local tests pass. The controlled Modal rerun is next.
+- **Status:** Corrected and tested. The matched rerun stayed at 40.4% overall and improved click accuracy from 34.9% to 35.5%.
 
 ## Current corrections in the training code
 
