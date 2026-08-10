@@ -364,6 +364,7 @@ def run_vjepa2_gui_pilot(
 
     if mode not in {
         "smoke",
+        "action_token_smoke",
         "pure",
         "separation",
         "scaled_separation",
@@ -374,7 +375,7 @@ def run_vjepa2_gui_pilot(
     config.memory_gib = 24.0
     if seed:
         config.seed = seed
-    if mode == "smoke":
+    if mode in {"smoke", "action_token_smoke"}:
         config.max_steps = 2
         config.max_train_transitions = 8
         config.max_validation_transitions = 8
@@ -385,6 +386,8 @@ def run_vjepa2_gui_pilot(
         config.log_every = 1
         config.approved_cost_limit_usd = 0.50
         config.max_runtime_seconds = 20 * 60
+        if mode == "action_token_smoke":
+            config.predictor_architecture = "action_token_spatial"
     elif mode == "pure":
         config.action_separation_weight = 0.0
     elif mode == "separation":
@@ -480,6 +483,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     source_dataset_audit_sha256 = hashlib.sha256(AUDIT_REPORT.read_bytes()).hexdigest()
     if mode in {
         "vjepa2_gui_smoke",
+        "vjepa2_gui_action_token_smoke",
         "vjepa2_gui_pure",
         "vjepa2_gui_separation",
         "vjepa2_gui_scaled_separation",
