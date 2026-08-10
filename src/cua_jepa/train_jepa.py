@@ -15,7 +15,12 @@ import torch
 from peft import LoraConfig, get_peft_model
 from torch.nn.utils import clip_grad_norm_
 
-from cua_jepa.jepa_data import TransitionSample, group_by_bundle, load_transition_tars
+from cua_jepa.jepa_data import (
+    TransitionSample,
+    balanced_bundle_groups,
+    group_by_bundle,
+    load_transition_tars,
+)
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
@@ -176,9 +181,7 @@ def validate_dataset_assignments(
     if train_splits != {"train"}:
         raise RuntimeError(f"Training data contains wrong splits: {sorted(train_splits)}")
     if validation_splits != {"validation"}:
-        raise RuntimeError(
-            f"Validation data contains wrong splits: {sorted(validation_splits)}"
-        )
+        raise RuntimeError(f"Validation data contains wrong splits: {sorted(validation_splits)}")
     if expected_train_transitions and len(train_samples) != expected_train_transitions:
         raise RuntimeError(
             f"Expected {expected_train_transitions} training transitions, "
@@ -195,14 +198,10 @@ def validate_dataset_assignments(
     validation_bundles = {sample.bundle_id for sample in validation_samples}
     bundle_overlap = train_bundles & validation_bundles
     if bundle_overlap:
-        raise RuntimeError(
-            f"Training and validation share {len(bundle_overlap)} bundle IDs"
-        )
+        raise RuntimeError(f"Training and validation share {len(bundle_overlap)} bundle IDs")
     image_overlap = _image_hashes(train_samples) & _image_hashes(validation_samples)
     if image_overlap:
-        raise RuntimeError(
-            f"Training and validation share {len(image_overlap)} exact screenshots"
-        )
+        raise RuntimeError(f"Training and validation share {len(image_overlap)} exact screenshots")
     return {
         "train_split": "train",
         "validation_split": "validation",
@@ -223,9 +222,7 @@ def approved_vision_parameters(
         for name, parameter in vision.named_parameters()
         if ".online." in name and parameter.requires_grad
     ]
-    target = [
-        parameter for name, parameter in vision.named_parameters() if ".target." in name
-    ]
+    target = [parameter for name, parameter in vision.named_parameters() if ".target." in name]
     base = [
         parameter
         for name, parameter in vision.named_parameters()
@@ -308,7 +305,10 @@ def _encode(vision, adapter: str, pixels: torch.Tensor, grid: torch.Tensor) -> t
             # dataclass field ordering. Select the merged 2048-D tokens by
             # their declared output dimension rather than a fragile index.
             return candidates[0]
-        shapes = [tuple(value.shape) if torch.is_tensor(value) else type(value).__name__ for value in output]
+        shapes = [
+            tuple(value.shape) if torch.is_tensor(value) else type(value).__name__
+            for value in output
+        ]
         raise TypeError(f"Could not identify Qwen pooled tokens in tuple: {shapes}")
     raise TypeError(f"Unexpected Qwen vision output type: {type(output)!r}")
 
@@ -329,9 +329,7 @@ def evaluate_action_sensitivity(
     device: torch.device,
     max_bundles: int,
 ) -> dict[str, Any]:
-    groups = [branches for branches in group_by_bundle(samples).values() if len(branches) == 4]
-    if max_bundles > 0:
-        groups = groups[:max_bundles]
+    groups = balanced_bundle_groups(samples, max_bundles)
     if not groups:
         return {
             "bundles": 0.0,
@@ -342,6 +340,7 @@ def evaluate_action_sensitivity(
     action_encoder.eval()
     predictor.eval()
     correct_ranks = 0
+    shuffled_correct_ranks = 0
     correct_distances: list[float] = []
     shuffled_distances: list[float] = []
     target_pair_distances: list[float] = []
@@ -397,18 +396,14 @@ def evaluate_action_sensitivity(
         weight_tensor = torch.stack(target_weights)
         target_variances.append(float(target_tensor.float().var(dim=0).mean().item()))
         prediction_variances.append(float(predictions.float().var(dim=0).mean().item()))
-        per_bundle_delta_loss = latent_delta_loss(
-            predicted_deltas, target_delta, weight_tensor
-        )
+        per_bundle_delta_loss = latent_delta_loss(predicted_deltas, target_delta, weight_tensor)
         delta_distances.extend([float(per_bundle_delta_loss.item())] * 4)
         for first in range(4):
             for second in range(first + 1, 4):
                 pair_weights = torch.maximum(target_weights[first], target_weights[second])
                 target_pair_distances.append(
                     float(
-                        latent_prediction_loss(
-                            targets[first], targets[second], pair_weights
-                        ).item()
+                        latent_prediction_loss(targets[first], targets[second], pair_weights).item()
                     )
                 )
                 target_pair_distances_unweighted.append(
@@ -424,7 +419,9 @@ def evaluate_action_sensitivity(
         bundle_actions: list[dict[str, Any]] = []
         for index, prediction in enumerate(predictions):
             distances = [
-                float(latent_prediction_loss(prediction, target, target_weights[target_index]).item())
+                float(
+                    latent_prediction_loss(prediction, target, target_weights[target_index]).item()
+                )
                 for target_index, target in enumerate(targets)
             ]
             predicted_target_index = min(range(4), key=distances.__getitem__)
@@ -434,13 +431,17 @@ def evaluate_action_sensitivity(
             correct_ranks += is_correct
             correct_distances.append(distances[index])
             shuffled_prediction = predictions[(index + 1) % 4]
-            shuffled_distances.append(
+            shuffled_candidate_distances = [
                 float(
                     latent_prediction_loss(
-                        shuffled_prediction, targets[index], target_weights[index]
+                        shuffled_prediction, target, target_weights[target_index]
                     ).item()
                 )
-            )
+                for target_index, target in enumerate(targets)
+            ]
+            shuffled_distances.append(shuffled_candidate_distances[index])
+            shuffled_target_index = min(range(4), key=shuffled_candidate_distances.__getitem__)
+            shuffled_correct_ranks += int(shuffled_target_index == index)
             app = branches[index].app
             action_kind = str(branches[index].action.get("kind", "unknown"))
             change_bucket = changed_pixel_bucket(branches[index].changed_pixel_fraction)
@@ -466,6 +467,9 @@ def evaluate_action_sensitivity(
                     "predicted_target_branch_index": predicted_target_index,
                     "correct_target_rank": correct_rank,
                     "correct": bool(is_correct),
+                    "shuffled_prediction_to_future_distances": (shuffled_candidate_distances),
+                    "shuffled_predicted_target_branch_index": shuffled_target_index,
+                    "shuffled_correct": bool(shuffled_target_index == index),
                 }
             )
         per_bundle_records.append(
@@ -489,6 +493,7 @@ def evaluate_action_sensitivity(
     count = len(groups) * 4
     target_pair_mean = sum(target_pair_distances) / len(target_pair_distances)
     prediction_pair_mean = sum(prediction_pair_distances) / len(prediction_pair_distances)
+
     def finalize_breakdown(
         values: dict[str, dict[str, float]],
     ) -> dict[str, dict[str, float]]:
@@ -501,9 +506,13 @@ def evaluate_action_sensitivity(
             for key, row in sorted(values.items())
         }
 
+    four_way_accuracy = correct_ranks / count
+    shuffled_four_way_accuracy = shuffled_correct_ranks / count
     return {
         "bundles": float(len(groups)),
-        "four_way_accuracy": correct_ranks / count,
+        "four_way_accuracy": four_way_accuracy,
+        "shuffled_four_way_accuracy": shuffled_four_way_accuracy,
+        "action_accuracy_drop": four_way_accuracy - shuffled_four_way_accuracy,
         "delta_prediction_loss": sum(delta_distances) / count,
         "correct_action_distance": sum(correct_distances) / count,
         "shuffled_action_distance": sum(shuffled_distances) / count,
@@ -516,11 +525,9 @@ def evaluate_action_sensitivity(
         "prediction_action_distance_mean": prediction_pair_mean,
         "prediction_action_distance_min": min(prediction_pair_distances),
         "prediction_action_distance_max": max(prediction_pair_distances),
-        "prediction_to_target_separation_ratio": prediction_pair_mean
-        / max(target_pair_mean, 1e-8),
+        "prediction_to_target_separation_ratio": prediction_pair_mean / max(target_pair_mean, 1e-8),
         "target_latent_variance": sum(target_variances) / len(target_variances),
-        "predicted_latent_variance": sum(prediction_variances)
-        / len(prediction_variances),
+        "predicted_latent_variance": sum(prediction_variances) / len(prediction_variances),
         "by_app": finalize_breakdown(app_results),
         "by_action_kind": finalize_breakdown(action_results),
         "by_changed_pixel_bucket": finalize_breakdown(changed_results),
@@ -627,9 +634,7 @@ def _save_training_checkpoint(
             if config.train_qwen_lora
             else None
         ),
-        "action_encoder_sha256": named_tensors_sha256(
-            action_encoder.state_dict().items()
-        ),
+        "action_encoder_sha256": named_tensors_sha256(action_encoder.state_dict().items()),
         "predictor_sha256": named_tensors_sha256(predictor.state_dict().items()),
     }
     write_json(checkpoint_path / "checkpoint_metadata.json", metadata)
@@ -703,9 +708,7 @@ def train_model4_jepa(
         {
             "dataset_id": (run_metadata or {}).get("dataset_id"),
             "train_profile": {
-                key: value
-                for key, value in train_profile.items()
-                if key != "ordered_bundle_ids"
+                key: value for key, value in train_profile.items() if key != "ordered_bundle_ids"
             },
             "validation_profile": {
                 key: value
@@ -755,9 +758,7 @@ def train_model4_jepa(
         trainable, lr=config.learning_rate, weight_decay=config.weight_decay
     )
     optimizer_parameter_ids = {
-        id(parameter)
-        for group in optimizer.param_groups
-        for parameter in group["params"]
+        id(parameter) for group in optimizer.param_groups for parameter in group["params"]
     }
     if optimizer_parameter_ids != {id(parameter) for parameter in trainable}:
         raise RuntimeError("Optimizer parameter scope does not match the approved parameters")
@@ -781,9 +782,7 @@ def train_model4_jepa(
         ),
         "head_parameter_count": sum(p.numel() for p in head_parameters),
         "optimizer_parameter_count": sum(p.numel() for p in trainable),
-        "action_encoder_parameter_count": sum(
-            p.numel() for p in action_encoder.parameters()
-        ),
+        "action_encoder_parameter_count": sum(p.numel() for p in action_encoder.parameters()),
         "predictor_parameter_count": sum(p.numel() for p in predictor.parameters()),
         "initial_online_target_max_difference": (
             adapter_pair_max_difference(vision) if config.train_qwen_lora else None
@@ -806,12 +805,8 @@ def train_model4_jepa(
             if config.train_qwen_lora
             else None
         ),
-        "initial_action_encoder_sha256": named_tensors_sha256(
-            action_encoder.state_dict().items()
-        ),
-        "initial_predictor_sha256": named_tensors_sha256(
-            predictor.state_dict().items()
-        ),
+        "initial_action_encoder_sha256": named_tensors_sha256(action_encoder.state_dict().items()),
+        "initial_predictor_sha256": named_tensors_sha256(predictor.state_dict().items()),
     }
     write_json(output_path / "initialization_audit.json", initialization_audit)
     optimizer.zero_grad(set_to_none=True)
@@ -957,9 +952,7 @@ def train_model4_jepa(
             actions = [branch.action for branch in branches]
             action_embeddings = _action_embedding(action_encoder, actions, device)
             spatial_actions = action_spatial_features(actions, current_grid[0], device)
-            predicted_deltas = predictor(
-                current_tokens, action_embeddings, spatial_actions
-            )
+            predicted_deltas = predictor(current_tokens, action_embeddings, spatial_actions)
             targets = torch.stack(future_tokens)
             target_weights = torch.stack(weights)
             target_deltas = latent_delta(current_tokens, targets)
@@ -1022,9 +1015,7 @@ def train_model4_jepa(
                 action_gradient_norm = gradient_l2_norm(action_encoder.parameters())
                 predictor_gradient_norm = gradient_l2_norm(predictor.parameters())
                 nonfinite_gradients = nonfinite_gradient_count(trainable)
-                total_gradient_norm = float(
-                    clip_grad_norm_(trainable, max_norm=1.0).item()
-                )
+                total_gradient_norm = float(clip_grad_norm_(trainable, max_norm=1.0).item())
                 last_optimizer_stats = {
                     "total_gradient_norm_before_clip": total_gradient_norm,
                     "online_lora_gradient_norm": online_gradient_norm,
@@ -1039,17 +1030,13 @@ def train_model4_jepa(
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 if config.train_qwen_lora:
-                    copy_online_adapter_to_target(
-                        vision, decay=config.target_ema_decay
-                    )
+                    copy_online_adapter_to_target(vision, decay=config.target_ema_decay)
                     _set_adapter(vision, "online")
             training_compute_seconds += time.perf_counter() - step_compute_started
             if step == 1 or step % config.log_every == 0:
                 overall_elapsed = time.perf_counter() - overall_started
                 updates_per_second = step / max(training_compute_seconds, 1e-8)
-                remaining_seconds = (config.max_steps - step) / max(
-                    updates_per_second, 1e-8
-                )
+                remaining_seconds = (config.max_steps - step) / max(updates_per_second, 1e-8)
                 cost = estimated_modal_cost(
                     overall_elapsed,
                     config.gpu_cost_per_second,
@@ -1065,12 +1052,9 @@ def train_model4_jepa(
                     "bundle_id": branches[0].bundle_id,
                     "current_application": branches[0].app,
                     "completed_run_fraction": step / max(config.max_steps, 1),
-                    "completed_epoch_fraction": next_bundle_position
-                    / max(len(epoch_bundles), 1),
+                    "completed_epoch_fraction": next_bundle_position / max(len(epoch_bundles), 1),
                     "action_mix_since_last_log": dict(sorted(action_mix_since_log.items())),
-                    "application_mix_since_last_log": dict(
-                        sorted(app_mix_since_log.items())
-                    ),
+                    "application_mix_since_last_log": dict(sorted(app_mix_since_log.items())),
                     "loss": losses[-1],
                     "regression_loss": regression_losses[-1],
                     "changed_region_loss": changed_region_losses[-1],
@@ -1084,21 +1068,13 @@ def train_model4_jepa(
                     "learning_rate": optimizer.param_groups[0]["lr"],
                     **last_optimizer_stats,
                     "online_lora_parameter_norm": parameter_l2_norm(online_parameters),
-                    "action_encoder_parameter_norm": parameter_l2_norm(
-                        action_encoder.parameters()
-                    ),
-                    "predictor_parameter_norm": parameter_l2_norm(
-                        predictor.parameters()
-                    ),
+                    "action_encoder_parameter_norm": parameter_l2_norm(action_encoder.parameters()),
+                    "predictor_parameter_norm": parameter_l2_norm(predictor.parameters()),
                     "online_target_max_difference": (
-                        adapter_pair_max_difference(vision)
-                        if config.train_qwen_lora
-                        else None
+                        adapter_pair_max_difference(vision) if config.train_qwen_lora else None
                     ),
-                    "current_cuda_memory_gib": torch.cuda.memory_allocated(device)
-                    / (1024**3),
-                    "peak_cuda_memory_gib": torch.cuda.max_memory_allocated(device)
-                    / (1024**3),
+                    "current_cuda_memory_gib": torch.cuda.memory_allocated(device) / (1024**3),
+                    "peak_cuda_memory_gib": torch.cuda.max_memory_allocated(device) / (1024**3),
                     "updates_per_second": updates_per_second,
                     "transitions_per_second": updates_per_second * 4,
                     "training_compute_seconds": training_compute_seconds,
@@ -1185,9 +1161,7 @@ def train_model4_jepa(
                     and collapse_metrics["shuffled_minus_correct"]
                     < config.collapse_min_shuffled_gap
                 )
-                consecutive_collapse_checks = (
-                    consecutive_collapse_checks + 1 if collapsed else 0
-                )
+                consecutive_collapse_checks = consecutive_collapse_checks + 1 if collapsed else 0
                 check_record: dict[str, Any] = {
                     "recorded_at_utc": utc_now(),
                     "step": step,
@@ -1336,17 +1310,13 @@ def train_model4_jepa(
         "elapsed_seconds": elapsed,
         "training_steps_per_second": step / max(training_compute_seconds, 1e-8),
         "mean_loss": sum(losses) / max(len(losses), 1),
-        "mean_regression_loss": sum(regression_losses)
-        / max(len(regression_losses), 1),
-        "mean_changed_region_loss": sum(changed_region_losses)
-        / max(len(changed_region_losses), 1),
+        "mean_regression_loss": sum(regression_losses) / max(len(regression_losses), 1),
+        "mean_changed_region_loss": sum(changed_region_losses) / max(len(changed_region_losses), 1),
         "mean_global_loss": sum(global_losses) / max(len(global_losses), 1),
         "mean_variance_loss": sum(variance_losses) / max(len(variance_losses), 1),
-        "mean_covariance_loss": sum(covariance_losses)
-        / max(len(covariance_losses), 1),
+        "mean_covariance_loss": sum(covariance_losses) / max(len(covariance_losses), 1),
         "mean_relation_loss": sum(relation_losses) / max(len(relation_losses), 1),
-        "mean_action_separation_loss": sum(separation_losses)
-        / max(len(separation_losses), 1),
+        "mean_action_separation_loss": sum(separation_losses) / max(len(separation_losses), 1),
         "first_10_loss": sum(losses[:10]) / max(min(10, len(losses)), 1),
         "last_10_loss": sum(losses[-10:]) / max(min(10, len(losses)), 1),
         "initial_train": initial_train,

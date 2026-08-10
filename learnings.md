@@ -707,7 +707,7 @@ The local source metrics are:
 - **Mistake:** The live validation monitor evaluated Jira only. The final validation evaluated Jira and Slack.
 - **Simple explanation:** The live score reached 29%, but the final score reached 38% because the evaluated applications changed.
 - **Correction:** Build each monitoring subset with fixed samples from every validation application.
-- **Status:** Found after the full run. The saved final validation result is valid. The monitor design needs correction.
+- **Status:** Corrected in code. The monitor now selects bundles round-robin across applications. A remote smoke test is pending.
 
 ### 81. Overall accuracy hid weak performance on important action groups
 
@@ -732,6 +732,22 @@ The local source metrics are:
 - **Simple explanation:** We completed one Model 4 training stage. We did not complete the four-model comparison.
 - **Correction:** Call this artifact the Model 4 one-step JEPA run. Complete the shared SFT stage and matched controls before we make the main research claim.
 - **Status:** Found after the full-data run. The artifact name stays unchanged for traceability. Future reports must use the corrected name.
+
+### 84. The default Python launcher points to a deleted installation
+
+- **Technical term:** Stale executable path.
+- **Mistake:** The first test command used `py`, which points to a deleted Python 3.13 installation.
+- **Simple explanation:** The test did not start because Windows looked for a Python file that no longer exists.
+- **Correction:** Use `C:\Python312\python.exe` for this repository. Repair the global launcher separately.
+- **Status:** Workaround applied. The complete test suite passed with Python 3.12.
+
+### 85. A later successful command hid an earlier test failure
+
+- **Technical term:** Exit-code masking.
+- **Mistake:** One shell call ran tests, lint, and a Modal check without stopping after the test failure.
+- **Simple explanation:** The final Modal command passed. This made the complete shell call look successful even though the tests failed to start.
+- **Correction:** Check `$LASTEXITCODE` after every required command. Disable unrelated global pytest plugins for repository tests.
+- **Status:** Corrected in later checks. The isolated test suite passed with 42 tests.
 
 ## Current corrections in the training code
 

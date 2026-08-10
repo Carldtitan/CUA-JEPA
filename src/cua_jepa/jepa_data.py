@@ -95,3 +95,35 @@ def group_by_bundle(samples: Iterable[TransitionSample]) -> dict[str, list[Trans
     for branches in groups.values():
         branches.sort(key=lambda sample: sample.branch_index)
     return groups
+
+
+def balanced_bundle_groups(
+    samples: Iterable[TransitionSample], max_bundles: int
+) -> list[list[TransitionSample]]:
+    """Select a fixed round-robin bundle sample across applications."""
+
+    groups = [branches for branches in group_by_bundle(samples).values() if len(branches) == 4]
+    if max_bundles <= 0 or max_bundles >= len(groups):
+        return groups
+
+    by_app: dict[str, list[list[TransitionSample]]] = {}
+    for branches in groups:
+        by_app.setdefault(branches[0].app, []).append(branches)
+
+    selected: list[list[TransitionSample]] = []
+    positions = {app: 0 for app in by_app}
+    apps = sorted(by_app)
+    while len(selected) < max_bundles:
+        added = False
+        for app in apps:
+            position = positions[app]
+            if position >= len(by_app[app]):
+                continue
+            selected.append(by_app[app][position])
+            positions[app] += 1
+            added = True
+            if len(selected) == max_bundles:
+                break
+        if not added:
+            break
+    return selected
