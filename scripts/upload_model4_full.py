@@ -48,14 +48,47 @@ def main() -> None:
             raise RuntimeError(f"A wrong split entered the {split} upload")
 
     volume = modal.Volume.from_name(VOLUME_NAME)
-    with volume.batch_upload(force=True) as batch:
-        batch.put_directory(DATA_ROOT / "train", f"{REMOTE_ROOT}/train")
-        batch.put_directory(
-            DATA_ROOT / "validation", f"{REMOTE_ROOT}/validation"
+    for split in ("train", "validation"):
+        app_directories = sorted(
+            path for path in (DATA_ROOT / split).iterdir() if path.is_dir()
+        )
+        for index, app_directory in enumerate(app_directories, start=1):
+            app_files = sorted(app_directory.glob("*.tar"))
+            print(
+                f"Uploading {split}/{app_directory.name}: {len(app_files)} files "
+                f"({index}/{len(app_directories)})",
+                flush=True,
+            )
+            with volume.batch_upload(force=True) as batch:
+                batch.put_directory(
+                    app_directory,
+                    f"{REMOTE_ROOT}/{split}/{app_directory.name}",
+                )
+            print(f"Committed {split}/{app_directory.name}", flush=True)
+
+    remote_paths = [
+        entry.path.lstrip("/")
+        for entry in volume.listdir(REMOTE_ROOT, recursive=True)
+    ]
+    remote_train = sum(
+        path.startswith("model4-full/train/") and path.endswith(".tar")
+        for path in remote_paths
+    )
+    remote_validation = sum(
+        path.startswith("model4-full/validation/") and path.endswith(".tar")
+        for path in remote_paths
+    )
+    remote_test = sum("/test/" in f"/{path}" for path in remote_paths)
+    if (remote_train, remote_validation, remote_test) != (320, 20, 0):
+        raise RuntimeError(
+            "Remote verification failed: "
+            f"{remote_train} train, {remote_validation} validation, "
+            f"{remote_test} test tar files"
         )
     print(
         f"Uploaded {len(train_files)} train and {len(validation_files)} validation "
-        f"tar files to {VOLUME_NAME}:{REMOTE_ROOT}"
+        f"tar files to {VOLUME_NAME}:{REMOTE_ROOT}",
+        flush=True,
     )
 
 
