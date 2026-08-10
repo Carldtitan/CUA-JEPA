@@ -83,6 +83,37 @@ python -m modal run modal_train_model4.py --mode separation --seed 20260810
 
 Outputs persist in the `cua-jepa-training-v1` Modal Volume.
 
+### Frozen V-JEPA 2 GUI pilot
+
+The V-JEPA 2 pilot uses the pinned `facebook/vjepa2-vitl-fpc64-256` encoder. The complete encoder stays frozen.
+
+The GUI predictor trains on V-JEPA 2 screen features. It does not train Qwen or V-JEPA 2 weights.
+
+Run the V-JEPA 2 checks in this order:
+
+```powershell
+python -m modal run modal_train_model4.py --mode vjepa2_encoder_smoke
+python -m modal run modal_train_model4.py --mode vjepa2_gui_smoke --seed 20260811
+python -m modal run modal_train_model4.py --mode vjepa2_gui_pure --seed 20260811
+python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_separation --seed 20260811
+python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_separation --seed 20260812
+```
+
+The scaled run uses 8,000 balanced training transitions. It evaluates 500 transitions from Jira and Slack. Neither application is in training.
+
+| Run | Overall | Action drop | Click | Large change |
+|---|---:|---:|---:|---:|
+| Pure regression, 500 steps | 28.4% | 4.4 points | 23.5% | 17.7% |
+| Scaled action separation, seed 20260811 | 40.4% | 19.6 points | 35.5% | 38.1% |
+| Scaled action separation, seed 20260812 | 38.8% | 18.8 points | 32.7% | 38.9% |
+| Scaled action separation mean | 39.6% | 19.2 points | 34.1% | 38.5% |
+
+Chance accuracy is 25%. The 95% bundle intervals are 37.2% to 43.6% and 35.8% to 42.0% for the two scaled runs.
+
+The result shows repeatable action learning. It does not show that pure JEPA regression is sufficient. The strong runs include an InfoNCE action-separation loss.
+
+Verified local artifacts are under `artifacts/vjepa2-gui-*`. The same artifacts remain in the persistent Modal Volume.
+
 ## Full Model 4 continued training
 
 The full Model 4 run does not load a pilot checkpoint.

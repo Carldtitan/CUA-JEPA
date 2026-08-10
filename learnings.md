@@ -861,6 +861,14 @@ The local source metrics are:
 - **Correction:** Transform click and type coordinates into the same letterboxed coordinate frame before making the spatial heatmap.
 - **Status:** Corrected and tested. The matched rerun stayed at 40.4% overall and improved click accuracy from 34.9% to 35.5%.
 
+### 100. The first Modal folder download used a file destination
+
+- **Technical term:** Concurrent output-path collision.
+- **Mistake:** The Modal folder download received a destination path that did not exist as a directory.
+- **Simple explanation:** Several remote files wrote to one local file. The result was corrupt.
+- **Correction:** Create the local directory first. Use the remote folder path without a glob. Validate every downloaded artifact set.
+- **Status:** Corrected. Three complete artifact sets pass the local artifact validator. The three corrupt temporary files were removed. The originals remain in Modal.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
