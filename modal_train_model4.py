@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +35,7 @@ VALIDATION_TAR = (
     / "jira_mock"
     / "validation-jira_mock-shard-0000.tar"
 )
+AUDIT_REPORT = DATA_ROOT.parent / "audit_report.json"
 
 
 def _diverse_pilot_tars(split: str, per_app: int, extras: int) -> tuple[Path, ...]:
@@ -52,14 +57,14 @@ else:
     PILOT_TRAIN_TARS = ()
     PILOT_VALIDATION_TARS = ()
 
-APP_NAME = "cua-jepa-model4-pilot"
+APP_NAME = "cua-jepa-model4-training"
 OUTPUT_VOLUME_NAME = "cua-jepa-training-v1"
 HF_CACHE_VOLUME_NAME = "hf-cache"
 DATA_VOLUME_NAME = "cua-jepa-synthetic-v1"
 
 
 def _require_inputs() -> None:
-    required = (CONFIG_PATH, TRAIN_TAR, VALIDATION_TAR)
+    required = (CONFIG_PATH, TRAIN_TAR, VALIDATION_TAR, AUDIT_REPORT)
     missing = [path for path in required if not path.exists()]
     if missing:
         raise RuntimeError("Missing Model 4 pilot inputs:\n" + "\n".join(map(str, missing)))
@@ -132,7 +137,12 @@ def check_processor() -> dict:
         "/dataset": data_volume,
     },
 )
-def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
+def run_model4_training(
+    mode: str = "smoke",
+    seed: int = 0,
+    git_commit: str = "unknown",
+    source_dataset_audit_sha256: str = "unknown",
+) -> dict:
     from cua_jepa.train_jepa import JEPATrainConfig, train_model4_jepa
 
     config = JEPATrainConfig.from_json("/opt/cua-jepa/model4_jepa_pilot.json")
@@ -154,7 +164,14 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
         config.expected_train_transitions = 8
         config.expected_validation_transitions = 8
         config.evaluation_bundles = 1
-        config.validation_evaluation_bundles = 0
+        config.validation_evaluation_bundles = 2
+        config.monitor_evaluation_bundles = 2
+        config.evaluation_steps = [0, 1, 2]
+        config.evaluation_every = 0
+        config.checkpoint_every = 1
+        config.collapse_check_every = 1
+        config.collapse_check_start_step = 1
+        config.collapse_patience = 10
         config.log_every = 1
     elif mode == "stage2":
         config.max_steps = 2_000
@@ -188,10 +205,14 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
         config.expected_validation_transitions = 2_000
         config.evaluation_bundles = 25
         config.validation_evaluation_bundles = 0
+        config.monitor_evaluation_bundles = 125
+        config.evaluation_steps = [0, 100, 250, 500]
+        config.evaluation_every = 500
+        config.checkpoint_every = 500
         config.collapse_check_every = 500
         config.collapse_check_bundles = 25
         config.collapse_check_start_step = 1_000
-        config.log_every = 100
+        config.log_every = 25
     elif mode != "pilot":
         raise ValueError(
             "mode must be 'smoke', 'lora_smoke', 'pilot', 'quick', 'pure', "
@@ -229,13 +250,40 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
             )
         if any("/test/" in path for path in train_paths + validation_paths):
             raise RuntimeError("The final test split entered a training path")
-    metrics = train_model4_jepa(
-        train_tar_paths=train_paths,
-        validation_tar_paths=validation_paths,
-        output_dir=output_dir,
-        config=config,
-    )
-    output_volume.commit()
+    run_metadata = {
+        "run_id": run_id,
+        "run_mode": mode,
+        "git_commit": git_commit,
+        "dataset_id": "clean-20260808-v7",
+        "source_dataset_audit_sha256": source_dataset_audit_sha256,
+        "modal_app_name": APP_NAME,
+        "modal_app_id": os.environ.get("MODAL_APP_ID"),
+    }
+    try:
+        metrics = train_model4_jepa(
+            train_tar_paths=train_paths,
+            validation_tar_paths=validation_paths,
+            output_dir=output_dir,
+            config=config,
+            run_metadata=run_metadata,
+            persistence_callback=output_volume.commit,
+        )
+    except BaseException as error:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "stop_reason.json").write_text(
+            json.dumps(
+                {
+                    "reason": "exception",
+                    "exception_type": type(error).__name__,
+                    "message": str(error),
+                    "traceback": traceback.format_exc(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        output_volume.commit()
+        raise
     metrics["run_id"] = run_id
     metrics["modal_output_dir"] = str(output_dir)
     print(json.dumps(metrics, indent=2), flush=True)
@@ -247,5 +295,14 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     if mode == "deps":
         print(json.dumps(check_processor.remote(), indent=2))
         return
-    metrics = run_model4_pilot.remote(mode, seed)
+    try:
+        git_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        git_commit = "unknown"
+    source_dataset_audit_sha256 = hashlib.sha256(AUDIT_REPORT.read_bytes()).hexdigest()
+    metrics = run_model4_training.remote(
+        mode, seed, git_commit, source_dataset_audit_sha256
+    )
     print(json.dumps(metrics, indent=2))

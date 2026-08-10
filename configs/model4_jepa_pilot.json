@@ -42,5 +42,18 @@
   "collapse_min_separation_ratio": 0.03,
   "collapse_min_shuffled_gap": 0.0001,
   "stop_on_collapse": true,
-  "log_every": 5
+  "log_every": 5,
+  "evaluation_steps": [0, 100, 250, 500],
+  "evaluation_every": 500,
+  "monitor_evaluation_bundles": 125,
+  "checkpoint_every": 500,
+  "max_runtime_seconds": 14400,
+  "approved_cost_limit_usd": 20.0,
+  "gpu_cost_per_second": 0.000222,
+  "cpu_cores": 4.0,
+  "cpu_cost_per_core_second": 0.0000131,
+  "memory_gib": 16.0,
+  "memory_cost_per_gib_second": 0.00000222,
+  "pricing_source": "https://modal.com/pricing",
+  "pricing_checked_date": "2026-08-09"
 }
