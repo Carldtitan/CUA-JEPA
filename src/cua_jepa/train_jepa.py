@@ -828,7 +828,8 @@ def train_model4_jepa(
     log_path = output_path / "train.jsonl"
     resource_path = output_path / "resource_usage.jsonl"
     training_compute_seconds = 0.0
-    action_mix_since_log: Counter[str] = Counter()
+    source_action_mix_since_log: Counter[str] = Counter()
+    conditioning_action_mix_since_log: Counter[str] = Counter()
     app_mix_since_log: Counter[str] = Counter()
     last_optimizer_stats: dict[str, float | int] = {
         "total_gradient_norm_before_clip": 0.0,
@@ -974,8 +975,11 @@ def train_model4_jepa(
             relation_losses.append(float(regularizers["relation"].detach().item()))
             separation_losses.append(float(separation_loss.detach().item()))
             step += 1
-            action_mix_since_log.update(
+            source_action_mix_since_log.update(
                 str(branch.action.get("kind", "unknown")) for branch in branches
+            )
+            conditioning_action_mix_since_log.update(
+                str(action.get("kind", "unknown")) for action in actions
             )
             app_mix_since_log.update([branches[0].app])
             if step % config.gradient_accumulation_steps == 0:
@@ -1021,7 +1025,12 @@ def train_model4_jepa(
                     "current_application": branches[0].app,
                     "completed_run_fraction": step / max(config.max_steps, 1),
                     "completed_epoch_fraction": next_bundle_position / max(len(epoch_bundles), 1),
-                    "action_mix_since_last_log": dict(sorted(action_mix_since_log.items())),
+                    "source_action_mix_since_last_log": dict(
+                        sorted(source_action_mix_since_log.items())
+                    ),
+                    "conditioning_action_mix_since_last_log": dict(
+                        sorted(conditioning_action_mix_since_log.items())
+                    ),
                     "application_mix_since_last_log": dict(sorted(app_mix_since_log.items())),
                     "loss": losses[-1],
                     "regression_loss": regression_losses[-1],
@@ -1069,7 +1078,8 @@ def train_model4_jepa(
                 )
                 print(json.dumps(record), flush=True)
                 last_record = record
-                action_mix_since_log.clear()
+                source_action_mix_since_log.clear()
+                conditioning_action_mix_since_log.clear()
                 app_mix_since_log.clear()
             periodic_metrics: dict[str, Any] | None = None
             if _should_evaluate(step, config):

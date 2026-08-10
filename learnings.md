@@ -1321,3 +1321,11 @@ The following work is not complete:
 - **Simple explanation:** The two LoRA adapters had equal numbers, but the check reported that they were different.
 - **Correction:** Replace the adapter name with one neutral name before hashing. Keep the direct maximum-value difference check.
 - **Status:** Corrected after the two-step Model 3 smoke found it. The smoke training completed. Its final artifact check failed, so it is not an approved run.
+
+### 151. The Model 3 training log showed source actions instead of its input
+
+- **Technical term:** Conditioning-observability mismatch.
+- **Mistake:** The training log counted the original click, type, scroll, and key actions. Model 3 actually received `NO_ACTION`.
+- **Simple explanation:** The training was correct, but the log could make it look incorrect.
+- **Correction:** Log the source action mix and the predictor conditioning mix as separate fields. Model 3 must report `NO_ACTION` four times for each bundle.
+- **Status:** Corrected after the approved two-step smoke and before the full Model 3 run.
