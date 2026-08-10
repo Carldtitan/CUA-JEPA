@@ -345,7 +345,7 @@ def run_model4_training(
     image=image,
     gpu="L4",
     cpu=4,
-    memory=16_384,
+    memory=24_576,
     timeout=75 * 60,
     scaledown_window=60,
     volumes={
@@ -362,9 +362,12 @@ def run_vjepa2_gui_pilot(
 ) -> dict:
     from cua_jepa.train_vjepa2 import VJEPA2PilotConfig, train_vjepa2_gui_pilot
 
-    if mode not in {"smoke", "pure", "separation"}:
-        raise ValueError("V-JEPA 2 mode must be 'smoke', 'pure', or 'separation'")
+    if mode not in {"smoke", "pure", "separation", "scaled_separation"}:
+        raise ValueError(
+            "V-JEPA 2 mode must be 'smoke', 'pure', 'separation', or 'scaled_separation'"
+        )
     config = VJEPA2PilotConfig()
+    config.memory_gib = 24.0
     if seed:
         config.seed = seed
     if mode == "smoke":
@@ -380,10 +383,26 @@ def run_vjepa2_gui_pilot(
         config.max_runtime_seconds = 20 * 60
     elif mode == "pure":
         config.action_separation_weight = 0.0
+    elif mode == "separation":
+        config.action_separation_weight = 0.25
     else:
         config.action_separation_weight = 0.25
+        config.max_train_transitions = 8_000
+        config.max_steps = 2_000
+        config.encoder_bundle_batch_size = 8
+        config.evaluation_steps = (0, 100, 250, 500, 1_000, 2_000)
+        config.log_every = 50
 
-    train_paths = [str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))]
+    if mode == "scaled_separation":
+        train_paths = [
+            str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
+        ]
+        if len(train_paths) != 320:
+            raise RuntimeError(f"Expected 320 full training tar files, found {len(train_paths)}")
+    else:
+        train_paths = [
+            str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
+        ]
     validation_paths = [
         str(path) for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
     ]
@@ -457,6 +476,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_smoke",
         "vjepa2_gui_pure",
         "vjepa2_gui_separation",
+        "vjepa2_gui_scaled_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

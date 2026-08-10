@@ -199,13 +199,15 @@ def encode_bundles(
                 )
             )
         if progress is not None:
-            progress(
-                {
-                    "event": "feature_encoding",
-                    "completed_bundles": len(encoded),
-                    "total_bundles": len(groups),
-                }
-            )
+            completed = len(encoded)
+            if completed == len(groups) or offset % (batch_size * 25) == 0:
+                progress(
+                    {
+                        "event": "feature_encoding",
+                        "completed_bundles": completed,
+                        "total_bundles": len(groups),
+                    }
+                )
     return encoded
 
 
@@ -508,6 +510,7 @@ def train_vjepa2_gui_pilot(
     )
     train_samples = [sample for branches in train_groups for sample in branches]
     validation_samples = [sample for branches in validation_groups for sample in branches]
+    del all_train_samples, all_validation_samples
     assignment_audit = validate_dataset_assignments(train_samples, validation_samples)
     dataset_audit = {
         **assignment_audit,
@@ -545,6 +548,7 @@ def train_vjepa2_gui_pilot(
     encoded_validation = encode_bundles(
         validation_groups, processor, encoder, device, config, report
     )
+    del train_groups, validation_groups, train_samples, validation_samples
     del encoder, processor
     gc.collect()
     torch.cuda.empty_cache()

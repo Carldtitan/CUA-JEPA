@@ -829,6 +829,22 @@ The local source metrics are:
 - **Correction:** Normalize both future targets and future predictions before calculating action variance.
 - **Status:** Corrected before the full pilot. All 50 local tests pass.
 
+### 96. The first pilot mixed action learning with unseen-application transfer
+
+- **Technical term:** In-domain and out-of-domain evaluation confound.
+- **Mistake:** We treated a score on Jira and Slack as a direct action-learning score, although neither application was in training.
+- **Simple explanation:** A low score can mean weak action learning, weak transfer to new software, or both.
+- **Correction:** Report training-application and unseen-application scores separately. Add a same-application held-out set before the final paper evaluation.
+- **Status:** Partly corrected. The reports now separate both scores. A same-application held-out set is still required.
+
+### 97. Feature encoding printed too many progress records
+
+- **Technical term:** Observability log saturation.
+- **Mistake:** The encoder printed one record for every four bundles. The Modal output became truncated.
+- **Simple explanation:** Useful training and evaluation records became harder to inspect.
+- **Correction:** Print feature progress every 25 encoder batches and at completion.
+- **Status:** Corrected. All 50 local tests pass.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
