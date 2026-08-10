@@ -362,10 +362,14 @@ def run_vjepa2_gui_pilot(
 ) -> dict:
     from cua_jepa.train_vjepa2 import VJEPA2PilotConfig, train_vjepa2_gui_pilot
 
-    if mode not in {"smoke", "pure", "separation", "scaled_separation"}:
-        raise ValueError(
-            "V-JEPA 2 mode must be 'smoke', 'pure', 'separation', or 'scaled_separation'"
-        )
+    if mode not in {
+        "smoke",
+        "pure",
+        "separation",
+        "scaled_separation",
+        "scaled_action_token",
+    }:
+        raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
     config.memory_gib = 24.0
     if seed:
@@ -392,8 +396,10 @@ def run_vjepa2_gui_pilot(
         config.encoder_bundle_batch_size = 8
         config.evaluation_steps = (0, 100, 250, 500, 1_000, 2_000)
         config.log_every = 50
+        if mode == "scaled_action_token":
+            config.predictor_architecture = "action_token_spatial"
 
-    if mode == "scaled_separation":
+    if mode in {"scaled_separation", "scaled_action_token"}:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
         ]
@@ -477,6 +483,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_pure",
         "vjepa2_gui_separation",
         "vjepa2_gui_scaled_separation",
+        "vjepa2_gui_scaled_action_token",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

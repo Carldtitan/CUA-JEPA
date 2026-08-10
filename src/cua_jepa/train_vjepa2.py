@@ -22,6 +22,7 @@ from cua_jepa.jepa_data import (
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    ActionTokenConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -61,6 +62,7 @@ class VJEPA2PilotConfig:
     predictor_dim: int = 384
     predictor_layers: int = 6
     predictor_heads: int = 8
+    predictor_architecture: str = "adaln_spatial"
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
     action_separation_weight: float = 0.25
@@ -554,7 +556,15 @@ def train_vjepa2_gui_pilot(
     torch.cuda.empty_cache()
 
     action_encoder = ActionEncoder(config.predictor_dim).to(device)
-    predictor = ActionConditionedPredictor(
+    predictor_classes = {
+        "adaln_spatial": ActionConditionedPredictor,
+        "action_token_spatial": ActionTokenConditionedPredictor,
+    }
+    if config.predictor_architecture not in predictor_classes:
+        raise ValueError(
+            f"Unknown V-JEPA 2 predictor architecture: {config.predictor_architecture}"
+        )
+    predictor = predictor_classes[config.predictor_architecture](
         latent_dim=1024,
         hidden_dim=config.predictor_dim,
         action_dim=config.predictor_dim,

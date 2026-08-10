@@ -845,6 +845,14 @@ The local source metrics are:
 - **Correction:** Print feature progress every 25 encoder batches and at completion.
 - **Status:** Corrected. All 50 local tests pass.
 
+### 98. The first V-JEPA 2 predictor had no explicit action token
+
+- **Technical term:** Action-token conditioning.
+- **Mistake:** The predictor used action-based normalization and a spatial heatmap, but it did not put the action into the transformer token sequence.
+- **Simple explanation:** Every layer received action information, but the attention operation could not attend to a separate action token as V-JEPA 2-AC does.
+- **Correction:** Add a predictor that prepends one learned action token. Keep the spatial click map and layer-wise action conditioning.
+- **Status:** Implemented locally. All 51 local tests pass. The controlled Modal pilot is next.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:

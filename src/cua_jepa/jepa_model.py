@@ -178,6 +178,54 @@ class ActionConditionedPredictor(nn.Module):
         return prediction.squeeze(0) if squeeze else prediction
 
 
+class ActionTokenConditionedPredictor(nn.Module):
+    """Predict visual changes with an explicit action token and spatial action map."""
+
+    def __init__(
+        self,
+        latent_dim: int = 2048,
+        hidden_dim: int = 384,
+        action_dim: int = 384,
+        layers: int = 2,
+        heads: int = 8,
+    ) -> None:
+        super().__init__()
+        self.input_norm = nn.LayerNorm(latent_dim)
+        self.input_projection = nn.Linear(latent_dim, hidden_dim)
+        self.action_token_projection = nn.Linear(action_dim, hidden_dim)
+        self.spatial_action_projection = nn.Linear(3, hidden_dim, bias=False)
+        self.blocks = nn.ModuleList(
+            ActionConditionedBlock(hidden_dim, action_dim, heads) for _ in range(layers)
+        )
+        self.output_norm = nn.LayerNorm(hidden_dim)
+        self.output_projection = nn.Linear(hidden_dim, latent_dim)
+
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        squeeze = current_tokens.ndim == 2
+        if squeeze:
+            current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
+        visual = self.input_projection(self.input_norm(current_tokens.float()))
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != visual.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {visual.shape}"
+                )
+            visual = visual + self.spatial_action_projection(spatial_action.float())
+        action_token = self.action_token_projection(action_embedding.float()).unsqueeze(1)
+        hidden = torch.cat((action_token, visual), dim=1)
+        for block in self.blocks:
+            hidden = block(hidden, action_embedding.float())
+        prediction = self.output_projection(self.output_norm(hidden[:, 1:]))
+        return prediction.squeeze(0) if squeeze else prediction
+
+
 def change_patch_weights(
     current: Image.Image,
     future: Image.Image,

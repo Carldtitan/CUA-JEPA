@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    ActionTokenConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -48,6 +49,19 @@ def test_predictor_and_latent_loss_backpropagate() -> None:
 def test_action_conditioning_changes_predictions() -> None:
     torch.manual_seed(3)
     predictor = ActionConditionedPredictor(
+        latent_dim=32, hidden_dim=32, action_dim=32, layers=2, heads=4
+    )
+    current = torch.randn(6, 32)
+    actions = torch.stack((torch.zeros(32), torch.ones(32)))
+    spatial = torch.zeros(2, 6, 3)
+    predictions = predictor(current, actions, spatial)
+    assert predictions.shape == (2, 6, 32)
+    assert not torch.allclose(predictions[0], predictions[1])
+
+
+def test_action_token_predictor_keeps_visual_shape_and_uses_action() -> None:
+    torch.manual_seed(4)
+    predictor = ActionTokenConditionedPredictor(
         latent_dim=32, hidden_dim=32, action_dim=32, layers=2, heads=4
     )
     current = torch.randn(6, 32)
