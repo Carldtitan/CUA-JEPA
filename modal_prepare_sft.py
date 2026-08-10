@@ -40,7 +40,7 @@ ARCHIVES = {
 if modal.is_local():
     image = (
         modal.Image.debian_slim(python_version="3.12")
-        .apt_install("aria2", "p7zip-full")
+        .apt_install("aria2", "p7zip-full", "zip")
         .pip_install("pillow>=10,<13", "requests>=2.31,<3")
         .add_local_python_source("cua_jepa", copy=True)
     )
@@ -70,6 +70,41 @@ def _write_json(path: Path, value) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+@app.function(image=image, cpu=1, memory=1024, timeout=10 * 60)
+def smoke_test_split_archive() -> dict:
+    root = Path("/tmp/split-archive-smoke")
+    source = root / "source"
+    archive_root = root / "archive"
+    extracted = root / "extracted"
+    source.mkdir(parents=True, exist_ok=True)
+    archive_root.mkdir(parents=True, exist_ok=True)
+    for index in range(3):
+        (source / f"image-{index}.png").write_bytes(bytes([index + 1]) * 100_000)
+    subprocess.run(
+        [
+            "zip",
+            "-q",
+            "-0",
+            "-s",
+            "64k",
+            str(archive_root / "images.zip"),
+            *[str(path) for path in sorted(source.iterdir())],
+        ],
+        check=True,
+    )
+    _extract_selected(archive_root / "images.zip", ["image-1.png"], extracted)
+    selected = list(extracted.rglob("image-1.png"))
+    unwanted = list(extracted.rglob("image-0.png")) + list(extracted.rglob("image-2.png"))
+    if len(selected) != 1 or unwanted or selected[0].read_bytes() != bytes([2]) * 100_000:
+        raise RuntimeError("Split archive selective extraction failed")
+    return {
+        "passed": True,
+        "archive_parts": sorted(path.name for path in archive_root.iterdir()),
+        "selected_files": [path.name for path in selected],
+        "unwanted_files": [path.name for path in unwanted],
+    }
 
 
 @app.function(
@@ -299,10 +334,12 @@ def _stream_text(url: str):
 
 @app.local_entrypoint()
 def main(mode: str = "plan") -> None:
-    if mode == "plan":
+    if mode == "smoke":
+        result = smoke_test_split_archive.remote()
+    elif mode == "plan":
         result = plan_agentnet_sft.remote()
     elif mode == "ingest":
         result = ingest_agentnet_images.remote()
     else:
-        raise ValueError("mode must be 'plan' or 'ingest'")
+        raise ValueError("mode must be 'smoke', 'plan', or 'ingest'")
     print(json.dumps(result, indent=2, sort_keys=True))
