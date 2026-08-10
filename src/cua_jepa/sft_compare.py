@@ -3,8 +3,71 @@
 from __future__ import annotations
 
 import random
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+
+EXPECTED_MODEL4_JEPA_ADAPTER_SHA256 = (
+    "177ec69820030e10190d30ddb62ba4a78cd88e77ef7e3738dd33dd15cf64096d"
+)
+
+
+def _read_json(path: Path) -> Any:
+    if not path.is_file():
+        raise ValueError(f"Required run file is missing: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) -> dict[str, Any]:
+    """Reject a Model 2 versus Model 4 comparison if its controls differ."""
+    model2_dir = Path(model2_dir)
+    model4_dir = Path(model4_dir)
+    config2 = _read_json(model2_dir / "config.json")
+    config4 = _read_json(model4_dir / "config.json")
+    audit2 = _read_json(model2_dir / "dataset_audit.json")
+    audit4 = _read_json(model4_dir / "dataset_audit.json")
+    init2 = _read_json(model2_dir / "initialization_audit.json")
+    init4 = _read_json(model4_dir / "initialization_audit.json")
+    validation2 = _read_json(model2_dir / "validation_example_ids.json")
+    validation4 = _read_json(model4_dir / "validation_example_ids.json")
+    order2 = _read_json(model2_dir / "training_order.json")
+    order4 = _read_json(model4_dir / "training_order.json")
+
+    checks = {
+        "same_config": config2 == config4,
+        "same_dataset_sha256": audit2.get("dataset_sha256") == audit4.get("dataset_sha256"),
+        "same_validation_ids": validation2 == validation4,
+        "same_training_order": order2 == order4,
+        "correct_variants": init2.get("variant") == "model2" and init4.get("variant") == "model4",
+        "same_base_model": init2.get("base_model") == init4.get("base_model"),
+        "same_base_revision": init2.get("base_revision") == init4.get("base_revision"),
+        "base_weights_frozen": init2.get("base_trainable_parameters") == 0
+        and init4.get("base_trainable_parameters") == 0,
+        "same_vision_lora_parameters": init2.get("vision_lora_parameters")
+        == init4.get("vision_lora_parameters"),
+        "same_language_lora_parameters": init2.get("language_lora_parameters")
+        == init4.get("language_lora_parameters"),
+        "same_language_initialization": init2.get("initial_language_lora_sha256")
+        == init4.get("initial_language_lora_sha256"),
+        "model2_has_no_jepa_source": init2.get("source_jepa_adapter_sha256") is None,
+        "model4_has_approved_jepa_source": init4.get("source_jepa_adapter_sha256")
+        == EXPECTED_MODEL4_JEPA_ADAPTER_SHA256,
+        "vision_initializations_differ": init2.get("initial_vision_lora_sha256")
+        != init4.get("initial_vision_lora_sha256"),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise ValueError(f"The controlled SFT pair failed checks: {failed}")
+    return {
+        "passed": True,
+        "checks": checks,
+        "dataset_sha256": audit2.get("dataset_sha256"),
+        "validation_examples": len(validation2),
+        "training_examples": len(order2),
+        "model4_jepa_adapter_sha256": init4.get("source_jepa_adapter_sha256"),
+    }
 
 
 def _percentile(sorted_values: list[float], fraction: float) -> float:
