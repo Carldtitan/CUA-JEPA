@@ -1217,3 +1217,11 @@ The following work is not complete:
 - **Simple explanation:** A prediction can pass even when it is far from a small button. One limit can hide poor pointer precision.
 - **Correction:** Keep the planned 0.10 main score. Also report strict hit rates at 0.02 and 0.05. Report the mean coordinate distance.
 - **Status:** Corrected before SFT. No SFT result used the incomplete metric set.
+
+### 138. The SFT cost estimate used lower Modal CPU and memory rates
+
+- **Technical term:** Pricing-tier mismatch.
+- **Mistake:** The SFT script used Modal's standard CPU and memory rates. A Starter workspace can use higher CPU and memory rates.
+- **Simple explanation:** The script could report a cost that was too low.
+- **Correction:** Use the higher Starter rates for the local safety estimate. Keep the four-hour runtime limit. Check the Modal billing page for the final charged cost.
+- **Status:** Corrected before SFT. The active CPU data job remains below the $40 total limit at its maximum runtime.

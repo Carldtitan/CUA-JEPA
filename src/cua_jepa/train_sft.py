@@ -53,9 +53,10 @@ class SFTTrainConfig:
     approved_cost_limit_usd: float = 20.0
     gpu_cost_per_second: float = 0.000222
     cpu_cores: float = 4.0
-    cpu_cost_per_core_second: float = 1.31e-5
+    # Conservative Modal Starter rates as checked on 2026-08-10.
+    cpu_cost_per_core_second: float = 3.942e-5
     memory_gib: float = 24.0
-    memory_cost_per_gib_second: float = 2.22e-6
+    memory_cost_per_gib_second: float = 6.67e-6
 
 
 def write_json(path: Path, value: Any) -> None:
