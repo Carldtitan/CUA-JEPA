@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from safetensors.torch import save_file
 from torch import nn
 
 from cua_jepa.jepa_data import TransitionSample
@@ -145,6 +146,8 @@ def _build_fake_run(root: Path) -> None:
     for name in (
         "initial_train",
         "initial_validation_monitor",
+        "train_monitor",
+        "validation_monitor",
         "final_train",
         "final_validation",
     ):
@@ -173,15 +176,30 @@ def _build_fake_run(root: Path) -> None:
     write_json(root / "metrics.json", {})
     write_json(root / "stop_reason.json", {"reason": "maximum_steps_completed", "steps": 2, "requested_steps": 2})
     write_json(root / "bundle_order.json", {"train": ["b"], "validation": ["v"]})
-    torch.save({}, root / "jepa_heads.pt")
+    torch.save({"action_encoder": {}, "predictor": {}}, root / "jepa_heads.pt")
     checkpoint = root / "checkpoints" / "step-000002"
     checkpoint.mkdir(parents=True)
-    torch.save({}, checkpoint / "training_state.pt")
+    torch.save(
+        {
+            "step": 2,
+            "epoch": 1,
+            "next_bundle_position": 2,
+            "epoch_bundle_ids": ["b"],
+            "action_encoder": {},
+            "predictor": {},
+            "optimizer": {"state": {1: {}}, "param_groups": []},
+            "python_random_state": (),
+            "torch_random_state": torch.get_rng_state(),
+            "cuda_random_states": [torch.get_rng_state()],
+            "config": {},
+        },
+        checkpoint / "training_state.pt",
+    )
     write_json(checkpoint / "checkpoint_metadata.json", {})
     for adapter in ("qwen_vision_online_lora", "qwen_vision_target_lora"):
         directory = root / adapter
         directory.mkdir()
-        (directory / "adapter_model.safetensors").write_bytes(b"weights")
+        save_file({"weight": torch.ones(1)}, directory / "adapter_model.safetensors")
 
 
 def test_artifact_validator_accepts_complete_run_and_rejects_missing_metric(

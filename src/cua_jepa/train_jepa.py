@@ -42,6 +42,7 @@ from cua_jepa.observability import (
     safe_action_record,
     tar_file_manifest,
     utc_now,
+    validate_run_artifacts,
     write_json,
 )
 
@@ -1128,6 +1129,20 @@ def train_model4_jepa(
                 app_mix_since_log.clear()
             periodic_metrics: dict[str, Any] | None = None
             if _should_evaluate(step, config):
+                _record_evaluation(
+                    evaluate_action_sensitivity(
+                        train_samples,
+                        processor,
+                        vision,
+                        action_encoder,
+                        predictor,
+                        device,
+                        config.evaluation_bundles,
+                    ),
+                    output_path,
+                    step,
+                    "train_monitor",
+                )
                 periodic_metrics = _record_evaluation(
                     evaluate_action_sensitivity(
                         validation_samples,
@@ -1381,6 +1396,11 @@ def train_model4_jepa(
     run_manifest["stop_reason"] = stop_reason
     run_manifest["completed_steps"] = step
     write_json(output_path / "run_manifest.json", run_manifest)
+    write_json(output_path / "final_metrics.json", metrics)
+    write_json(output_path / "metrics.json", metrics)
+    artifact_validation = validate_run_artifacts(output_path, expected_steps=step)
+    write_json(output_path / "artifact_validation.json", artifact_validation)
+    metrics["artifact_validation"] = artifact_validation
     write_json(output_path / "final_metrics.json", metrics)
     write_json(output_path / "metrics.json", metrics)
     persist_outputs()

@@ -420,6 +420,8 @@ def validate_run_artifacts(
     required_evaluations = {
         "initial_train",
         "initial_validation_monitor",
+        "train_monitor",
+        "validation_monitor",
         "final_train",
         "final_validation",
     }
@@ -456,15 +458,55 @@ def validate_run_artifacts(
     if not checkpoint_directories:
         raise ValueError("Run has no checkpoint directories")
     for checkpoint in checkpoint_directories:
-        if not (checkpoint / "training_state.pt").is_file():
+        training_state_path = checkpoint / "training_state.pt"
+        if not training_state_path.is_file():
             raise ValueError(f"Checkpoint has no training state: {checkpoint}")
         _strict_json(checkpoint / "checkpoint_metadata.json")
+        try:
+            checkpoint_state = torch.load(
+                training_state_path, map_location="cpu", weights_only=False
+            )
+        except Exception as error:
+            raise ValueError(f"Checkpoint cannot be loaded: {training_state_path}") from error
+        _require_keys(
+            checkpoint_state,
+            {
+                "step",
+                "epoch",
+                "next_bundle_position",
+                "epoch_bundle_ids",
+                "action_encoder",
+                "predictor",
+                "optimizer",
+                "python_random_state",
+                "torch_random_state",
+                "cuda_random_states",
+                "config",
+            },
+            f"checkpoint {checkpoint.name}",
+        )
+        if not checkpoint_state["optimizer"].get("state"):
+            raise ValueError(f"Checkpoint optimizer state is empty: {checkpoint}")
+    try:
+        torch.load(root / "jepa_heads.pt", map_location="cpu", weights_only=False)
+    except Exception as error:
+        raise ValueError("JEPA head weights cannot be loaded") from error
+    from safetensors import safe_open
+
     for adapter_directory in (
         root / "qwen_vision_online_lora",
         root / "qwen_vision_target_lora",
     ):
-        if not list(adapter_directory.rglob("*.safetensors")):
+        adapter_files = list(adapter_directory.rglob("*.safetensors"))
+        if not adapter_files:
             raise ValueError(f"Adapter weights are missing from {adapter_directory}")
+        for adapter_file in adapter_files:
+            try:
+                with safe_open(adapter_file, framework="pt", device="cpu") as handle:
+                    if not list(handle.keys()):
+                        raise ValueError("Adapter contains no tensors")
+            except Exception as error:
+                raise ValueError(f"Adapter cannot be loaded: {adapter_file}") from error
 
     return {
         "passed": True,
