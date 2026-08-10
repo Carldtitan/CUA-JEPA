@@ -174,7 +174,7 @@ def _extract_selected(archive: Path, names: list[str], destination: Path) -> Non
     image=image,
     cpu=8,
     memory=16_384,
-    ephemeral_disk=300 * 1024,
+    ephemeral_disk=512 * 1024,
     timeout=4 * 60 * 60,
     volumes={"/sft": volume},
 )

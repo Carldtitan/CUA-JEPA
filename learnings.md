@@ -1113,3 +1113,19 @@ The following work is not complete:
 - **Simple explanation:** A valid action such as Ctrl+S was read correctly and then rejected by mistake.
 - **Correction:** Clear the processed hotkey arguments. Keep a unit test for a two-key hotkey.
 - **Status:** Corrected before data ingestion. No generated data or GPU run was affected.
+
+### 125. The first AgentNet Modal app used an invalid temporary disk request
+
+- **Technical term:** Ephemeral disk resource limit.
+- **Mistake:** The image ingestion function requested 300 GB of temporary disk. Modal accepts a custom request from 512 GB to 3 TB.
+- **Simple explanation:** Modal rejected the app before the low-cost planning function could start.
+- **Correction:** Request 512 GB. The disk is temporary and disappears after the function ends.
+- **Status:** Corrected before data parsing, image download, or GPU use.
+
+### 126. The first AgentNet Modal command used the Windows default text encoding
+
+- **Technical term:** Console character encoding.
+- **Mistake:** The Modal client printed a check-mark character to a Windows console that used a non-UTF-8 encoding.
+- **Simple explanation:** The local command stopped while it tried to print text. The remote job did not start.
+- **Correction:** Set `PYTHONUTF8=1` for Modal commands on this Windows system.
+- **Status:** Corrected. No data or GPU run was affected.
