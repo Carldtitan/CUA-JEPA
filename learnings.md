@@ -1080,4 +1080,20 @@ The following work is not complete:
 - **Mistake:** Old feature caches from rejected tests remained in the Modal volume. The V-JEPA cache folder grew to about 34.4 GB.
 - **Simple explanation:** Saved copies of calculations used more storage than the 30 GB limit.
 - **Correction:** Keep the active unseen-application cache. Remove obsolete and duplicated caches after model artifacts are verified. Check measured size before a large run.
-- **Status:** Corrected. Three obsolete caches totaling about 29.2 GB were removed. Saved models and metrics were not removed. The remaining V-JEPA caches use about 5.2 GB.
+- **Status:** Corrected. Four obsolete caches totaling about 34.4 GB were removed. Saved models and metrics were not removed. The active all-data cache and smoke caches use about 20.0 GB.
+
+### 121. One successful full-data seed was not enough
+
+- **Technical term:** Random-seed stability for unseen-app transfer.
+- **Mistake:** The first all-data seed passed every gate. Reporting only that seed would hide unstable click transfer.
+- **Simple explanation:** A different random start learned Jira and Slack less well, even with the same training and validation data.
+- **Correction:** Repeat the full run with the same exact data and a different model seed. Report both results and their mean.
+- **Status:** Corrected. The two overall scores are 44.7% and 40.7%. Their mean is 42.7%. The click scores are 39.8% and 33.2%. Their mean is 36.5%.
+
+### 122. The 8,000-transition run did not use most available data
+
+- **Technical term:** Data-scale ablation.
+- **Mistake:** We changed several predictor designs before testing the existing method on all 30,668 training transitions.
+- **Simple explanation:** The working method had seen only about one quarter of the available transitions.
+- **Correction:** Keep the same architecture and loss. Train one step on every complete training bundle. Evaluate all 2,000 Jira and Slack transitions.
+- **Status:** Corrected. The two-seed overall mean increased from 39.6% to 42.7%. The increase is 3.1 points. This helps, but it does not remove seed variation or fully solve clicks.

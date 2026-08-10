@@ -117,6 +117,9 @@ The scaled run uses 8,000 balanced training transitions. It evaluates 500 transi
 | Same-app holdout, seed 20260811 | 69.6% | 58.0 points | 55.9% | 66.3% |
 | Same-app holdout, seed 20260812 | 72.4% | 61.6 points | 59.1% | 67.4% |
 | Same-app holdout mean | 71.0% | 59.8 points | 57.5% | 66.9% |
+| All-data unseen apps, seed 20260811 | 44.7% | 26.9 points | 39.8% | 41.5% |
+| All-data unseen apps, seed 20260812 | 40.7% | 22.1 points | 33.2% | 30.3% |
+| All-data unseen apps mean | 42.7% | 24.5 points | 36.5% | 35.9% |
 
 Chance accuracy is 25%. The 95% bundle intervals are 37.2% to 43.6% and 35.8% to 42.0% for the two scaled runs.
 
@@ -129,6 +132,8 @@ The all-data V-JEPA run uses all 30,668 training transitions and all 2,000 unsee
 ```powershell
 python -m modal run modal_train_model4.py --mode vjepa2_gui_full_data_separation --seed 20260811
 ```
+
+The two all-data runs used the same 500 Jira and Slack bundles. Their audits found no shared bundle IDs or exact screenshots. The all-data mean is 3.1 points above the 8,000-transition mean. Click transfer remains unstable across seeds.
 
 Verified local artifacts are under `artifacts/vjepa2-gui-*` and `artifacts/same-app-*`. The same artifacts remain in the persistent Modal Volume.
 
