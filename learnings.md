@@ -1104,7 +1104,7 @@ The following work is not complete:
 - **Mistake:** We discussed the strong frozen V-JEPA predictor as if it could directly become Model 4's Qwen policy.
 - **Simple explanation:** That run changed only the JEPA predictor. It did not change Qwen. Qwen gets no benefit if we remove the predictor before SFT.
 - **Correction:** Test the saved Qwen vision LoRA adapter first. Keep that adapter attached during the same SFT used for Model 2 and Model 4. A different option is to keep V-JEPA in the policy, but that would change the model architecture and inference cost.
-- **Status:** Open. The saved Qwen vision LoRA adapter was found and checked. The common SFT and downstream action test are not implemented yet.
+- **Status:** Direction 1 selected. The saved Qwen vision LoRA remains inside Model 4. The common SFT path is implemented and checked. The controlled SFT runs are in progress.
 
 ### 124. The first SFT action parser rejected valid hotkeys
 
@@ -1304,7 +1304,7 @@ The following work is not complete:
 - **Mistake:** We started preparing supervised SFT data without first stating that the strongest V-JEPA 2 predictor was separate from the Qwen action policy.
 - **Simple explanation:** The JEPA predictor learned screen changes. Qwen still needs a defined way to use that knowledge when it chooses an action.
 - **Correction:** Treat SFT and JEPA-to-Qwen transfer as separate design decisions. State which JEPA component enters the policy before training. Compare the low-cost Qwen-LoRA transfer path with an explicit V-JEPA 2 policy connection.
-- **Status:** Open architecture decision. AgentNet ingestion continues because the same supervised subset can test either transfer path.
+- **Status:** Resolved. The user selected the Qwen-native path. Model 4 keeps the Qwen visual LoRA learned during action-conditioned JEPA training.
 
 ### 149. The first Model 3 implementation used shuffled actions
 
