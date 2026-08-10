@@ -52,6 +52,16 @@ def test_controlled_pair_audit_checks_all_initial_conditions(tmp_path) -> None:
     for name, value in common_files.items():
         _write_json(model2 / name, value)
         _write_json(model4 / name, value)
+    _write_json(model2 / "source_jepa_audit.json", {"source": None})
+    _write_json(
+        model4 / "source_jepa_audit.json",
+        {
+            "source": "action-conditioned JEPA",
+            "adapter_model_sha256": EXPECTED_MODEL4_JEPA_ADAPTER_SHA256,
+            "uses_action_separation": True,
+            "objective": "latent regression plus action separation",
+        },
+    )
     base_init = {
         "base_model": "qwen",
         "base_revision": "revision",

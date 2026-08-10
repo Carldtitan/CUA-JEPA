@@ -32,6 +32,8 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
     init4 = _read_json(model4_dir / "initialization_audit.json")
     runtime2 = _read_json(model2_dir / "runtime_audit.json")
     runtime4 = _read_json(model4_dir / "runtime_audit.json")
+    source2 = _read_json(model2_dir / "source_jepa_audit.json")
+    source4 = _read_json(model4_dir / "source_jepa_audit.json")
     validation2 = _read_json(model2_dir / "validation_example_ids.json")
     validation4 = _read_json(model4_dir / "validation_example_ids.json")
     order2 = _read_json(model2_dir / "training_order.json")
@@ -57,6 +59,10 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
         "model2_has_no_jepa_source": init2.get("source_jepa_adapter_sha256") is None,
         "model4_has_approved_jepa_source": init4.get("source_jepa_adapter_sha256")
         == EXPECTED_MODEL4_JEPA_ADAPTER_SHA256,
+        "model2_source_audit_is_empty": source2.get("source") is None,
+        "model4_source_audit_matches_adapter": source4.get("adapter_model_sha256")
+        == init4.get("source_jepa_adapter_sha256"),
+        "model4_source_uses_action_separation": source4.get("uses_action_separation") is True,
         "vision_initializations_differ": init2.get("initial_vision_lora_sha256")
         != init4.get("initial_vision_lora_sha256"),
     }
@@ -72,6 +78,7 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
         "model4_jepa_adapter_sha256": init4.get("source_jepa_adapter_sha256"),
         "training_code_sha256": runtime2.get("training_code_sha256"),
         "evaluation_code_sha256": runtime2.get("evaluation_code_sha256"),
+        "model4_source_objective": source4.get("objective"),
     }
 
 
