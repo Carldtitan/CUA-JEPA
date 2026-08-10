@@ -45,6 +45,7 @@ class SFTTrainConfig:
     log_every: int = 10
     monitor_every: int = 100
     monitor_examples: int = 32
+    initial_evaluation_examples: int = 250
     final_evaluation_examples: int = 250
     max_new_tokens: int = 64
     coordinate_threshold: float = 0.1
@@ -84,6 +85,12 @@ def tensor_state_sha256(parameters: Iterable[tuple[str, torch.Tensor]]) -> str:
         digest.update(name.encode())
         digest.update(value.detach().float().cpu().numpy().tobytes())
     return digest.hexdigest()
+
+
+def trainable_state_sha256(module: torch.nn.Module) -> str:
+    return tensor_state_sha256(
+        (name, value) for name, value in module.named_parameters() if value.requires_grad
+    )
 
 
 def find_last_subsequence(sequence: list[int], subsequence: list[int]) -> int:
@@ -414,7 +421,7 @@ def train_policy_sft(
         manifest,
         dataset_root,
         device,
-        min(config.monitor_examples, len(validation)),
+        min(config.initial_evaluation_examples, len(validation)),
         config,
         output_path,
         "initial_validation",
@@ -436,10 +443,23 @@ def train_policy_sft(
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, schedule)
     order = list(range(len(train)))
     random.Random(config.seed).shuffle(order)
+    write_json(
+        output_path / "training_order.json",
+        [
+            {
+                "position": position,
+                "example_id": train[index]["example_id"],
+                "task_id": train[index]["task_id"],
+                "action_kind": train[index]["action_kind"],
+            }
+            for position, index in enumerate(order)
+        ],
+    )
     micro_step = 0
     optimizer_step = 0
     losses = []
     recent_losses = []
+    recent_action_losses: dict[str, list[float]] = {}
     optimizer.zero_grad(set_to_none=True)
     model.train()
     stop_reason = "maximum_steps_completed"
@@ -457,6 +477,7 @@ def train_policy_sft(
         loss_value = float(raw_loss.detach().item())
         losses.append(loss_value)
         recent_losses.append(loss_value)
+        recent_action_losses.setdefault(record["action_kind"], []).append(loss_value)
         micro_step += 1
         if micro_step % config.gradient_accumulation_steps:
             continue
@@ -473,6 +494,10 @@ def train_policy_sft(
                 "step": optimizer_step,
                 "micro_step": micro_step,
                 "mean_loss": sum(recent_losses) / len(recent_losses),
+                "mean_loss_by_action": {
+                    action: sum(values) / len(values)
+                    for action, values in sorted(recent_action_losses.items())
+                },
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "vision_lora_gradient_norm": vision_gradient_norm,
                 "language_lora_gradient_norm": language_gradient_norm,
@@ -485,6 +510,7 @@ def train_policy_sft(
             append_jsonl(output_path / "train_metrics.jsonl", event)
             print(json.dumps(event, sort_keys=True), flush=True)
             recent_losses.clear()
+            recent_action_losses.clear()
         if config.monitor_every and optimizer_step % config.monitor_every == 0:
             evaluate_policy(
                 model,
@@ -516,6 +542,8 @@ def train_policy_sft(
         optimizer_step,
     )
     _save_adapters(model, output_path)
+    final_vision_lora_sha256 = trainable_state_sha256(model.model.visual)
+    final_language_lora_sha256 = trainable_state_sha256(model.model.language_model)
     elapsed = time.perf_counter() - started
     estimated_cost = elapsed * (
         config.gpu_cost_per_second
@@ -538,6 +566,14 @@ def train_policy_sft(
             torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
         ),
         "initialization_audit": initialization,
+        "final_vision_lora_sha256": final_vision_lora_sha256,
+        "final_language_lora_sha256": final_language_lora_sha256,
+        "vision_lora_changed": (
+            final_vision_lora_sha256 != initialization["initial_vision_lora_sha256"]
+        ),
+        "language_lora_changed": (
+            final_language_lora_sha256 != initialization["initial_language_lora_sha256"]
+        ),
     }
     if estimated_cost > config.approved_cost_limit_usd:
         raise RuntimeError(

@@ -1201,3 +1201,11 @@ The following work is not complete:
 - **Simple explanation:** The next download could not put images inside that path because the path was a file.
 - **Correction:** Confirm that the file was empty and inside the repository. Remove it. Create the directory. Use a trailing slash for the directory download.
 - **Status:** Corrected. All 750 Ubuntu QA images downloaded locally. No remote data was changed.
+
+### 136. The full SFT plan used different validation sizes before and after training
+
+- **Technical term:** Evaluation-set mismatch.
+- **Mistake:** The full run planned to test 32 validation examples before SFT and 250 examples after SFT.
+- **Simple explanation:** A score can change because the examples changed. This makes the learning result harder to interpret.
+- **Correction:** Test the same 250 validation examples before and after each full run. Keep smaller fixed sets only for smoke tests and pilots. Save the exact validation IDs and training order.
+- **Status:** Corrected before SFT. No training run used the mismatched full evaluation.
