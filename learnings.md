@@ -691,7 +691,15 @@ The local source metrics are:
 - **Mistake:** I called the active run a failure from the step-1,500 validation result.
 - **Simple explanation:** The action loss started to improve after step 1,750. One early checkpoint did not show the later change.
 - **Correction:** Separate the current result from the final result. Check the next fixed validation result before declaring failure.
-- **Status:** Found during the active full run. The step-2,000 validation result is pending.
+- **Status:** Confirmed. Step-2,000 training accuracy reached 52%, while validation accuracy reached only 27.6%.
+
+### 79. Training action accuracy can improve without strong validation transfer
+
+- **Technical term:** Generalization gap.
+- **Mistake:** We could treat the step-2,000 training accuracy increase as proof that Model 4 works.
+- **Simple explanation:** Training accuracy reached 52%, but accuracy on the unseen validation application was only 27.6%. Chance is 25%.
+- **Correction:** Use validation and test results for the main claim. Treat training accuracy only as proof that the model can fit the training signal.
+- **Status:** Found during the active full run. Later validation checkpoints and the final test are pending.
 
 ## Current corrections in the training code
 
