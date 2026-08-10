@@ -1289,3 +1289,11 @@ The following work is not complete:
 - **Simple explanation:** We could later describe Model 4 as pure JEPA regression. That would be false. The saved adapter used latent regression, action separation, and anti-collapse regularization.
 - **Correction:** Copy the complete source training config, source metrics hash, adapter hash, and objective label into each Model 4 SFT result.
 - **Status:** Corrected before SFT. The downstream test will use the successful action-conditioned JEPA adapter and will label it accurately.
+
+### 147. The status update hid the model architecture work
+
+- **Technical term:** Status-scope mismatch.
+- **Mistake:** The status update focused on the active AgentNet download instead of the recent model architecture experiments.
+- **Simple explanation:** The user asked what changed in the model. The answer mainly described data transfer.
+- **Correction:** Separate every future status report into model architecture, training result, data work, and active compute. State clearly whether a test changed Qwen or only a separate predictor.
+- **Status:** Corrected in the next architecture summary. No model, data, or active Modal job was changed.
