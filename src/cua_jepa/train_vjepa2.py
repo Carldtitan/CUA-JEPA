@@ -26,6 +26,7 @@ from cua_jepa.jepa_model import (
     ActionTokenConditionedPredictor,
     IndependentTiledActionConditionedPredictor,
     TiledActionConditionedPredictor,
+    VisualGatedActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -933,6 +934,7 @@ def train_vjepa2_gui_pilot(
         "action_token_spatial": ActionTokenConditionedPredictor,
         "tiled_adaln_spatial": TiledActionConditionedPredictor,
         "independent_tiled_adaln_spatial": IndependentTiledActionConditionedPredictor,
+        "visual_gated": VisualGatedActionConditionedPredictor,
     }
     if config.predictor_architecture not in predictor_classes:
         raise ValueError(

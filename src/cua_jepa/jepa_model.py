@@ -180,6 +180,81 @@ class ActionConditionedPredictor(nn.Module):
         return prediction.squeeze(0) if squeeze else prediction
 
 
+class VisualGatedActionConditionedBlock(nn.Module):
+    """Let an action scale visual processing without adding action-only content."""
+
+    def __init__(self, hidden_dim: int, action_dim: int, heads: int) -> None:
+        super().__init__()
+        self.norm_attention = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.attention = nn.MultiheadAttention(
+            hidden_dim, heads, batch_first=True, bias=False
+        )
+        self.norm_mlp = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4, bias=False),
+            nn.GELU(),
+            nn.Linear(hidden_dim * 4, hidden_dim, bias=False),
+        )
+        self.action_scales = nn.Linear(action_dim, hidden_dim * 2, bias=False)
+
+    def forward(self, hidden: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        attention_scale, mlp_scale = torch.tanh(self.action_scales(action)).chunk(
+            2, dim=-1
+        )
+        normalized = self.norm_attention(hidden)
+        attended, _ = self.attention(normalized, normalized, normalized, need_weights=False)
+        hidden = hidden + attended * (1.0 + attention_scale.unsqueeze(1))
+        transformed = self.mlp(self.norm_mlp(hidden))
+        return hidden + transformed * (1.0 + mlp_scale.unsqueeze(1))
+
+
+class VisualGatedActionConditionedPredictor(nn.Module):
+    """Predict changes through multiplicative action and pointer gates."""
+
+    def __init__(
+        self,
+        latent_dim: int = 2048,
+        hidden_dim: int = 384,
+        action_dim: int = 384,
+        layers: int = 2,
+        heads: int = 8,
+    ) -> None:
+        super().__init__()
+        self.input_norm = nn.LayerNorm(latent_dim, elementwise_affine=False)
+        self.input_projection = nn.Linear(latent_dim, hidden_dim, bias=False)
+        self.spatial_action_gate = nn.Linear(3, hidden_dim, bias=False)
+        self.blocks = nn.ModuleList(
+            VisualGatedActionConditionedBlock(hidden_dim, action_dim, heads)
+            for _ in range(layers)
+        )
+        self.output_norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.output_projection = nn.Linear(hidden_dim, latent_dim, bias=False)
+
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        squeeze = current_tokens.ndim == 2
+        if squeeze:
+            current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
+        hidden = self.input_projection(self.input_norm(current_tokens.float()))
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != hidden.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {hidden.shape}"
+                )
+            gate = torch.tanh(self.spatial_action_gate(spatial_action.float()))
+            hidden = hidden * (1.0 + gate)
+        for block in self.blocks:
+            hidden = block(hidden, action_embedding.float())
+        prediction = self.output_projection(self.output_norm(hidden))
+        return prediction.squeeze(0) if squeeze else prediction
+
+
 class TiledActionConditionedPredictor(ActionConditionedPredictor):
     """Condition tiled visual tokens on their location in the complete screen."""
 

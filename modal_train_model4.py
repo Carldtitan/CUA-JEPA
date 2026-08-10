@@ -377,6 +377,9 @@ def run_vjepa2_gui_pilot(
         "counterfactual_smoke",
         "counterfactual_scaled_pure",
         "counterfactual_scaled_separation",
+        "counterfactual_gated_smoke",
+        "counterfactual_gated_scaled_pure",
+        "counterfactual_gated_scaled_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -390,6 +393,7 @@ def run_vjepa2_gui_pilot(
         "tiled_smoke",
         "independent_tiled_smoke",
         "counterfactual_smoke",
+        "counterfactual_gated_smoke",
     }:
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -411,6 +415,10 @@ def run_vjepa2_gui_pilot(
             config.predictor_architecture = "independent_tiled_adaln_spatial"
         elif mode == "counterfactual_smoke":
             config.prediction_target_mode = "counterfactual_residual"
+            config.action_separation_weight = 0.0
+        elif mode == "counterfactual_gated_smoke":
+            config.prediction_target_mode = "counterfactual_residual"
+            config.predictor_architecture = "visual_gated"
             config.action_separation_weight = 0.0
     elif mode == "pure":
         config.action_separation_weight = 0.0
@@ -444,6 +452,15 @@ def run_vjepa2_gui_pilot(
             config.action_separation_weight = (
                 0.0 if mode == "counterfactual_scaled_pure" else 0.25
             )
+        elif mode in {
+            "counterfactual_gated_scaled_pure",
+            "counterfactual_gated_scaled_separation",
+        }:
+            config.prediction_target_mode = "counterfactual_residual"
+            config.predictor_architecture = "visual_gated"
+            config.action_separation_weight = (
+                0.0 if mode == "counterfactual_gated_scaled_pure" else 0.25
+            )
 
     if mode in {
         "scaled_separation",
@@ -453,6 +470,8 @@ def run_vjepa2_gui_pilot(
         "independent_tiled_wide_separation",
         "counterfactual_scaled_pure",
         "counterfactual_scaled_separation",
+        "counterfactual_gated_scaled_pure",
+        "counterfactual_gated_scaled_separation",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -547,6 +566,9 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_counterfactual_smoke",
         "vjepa2_gui_counterfactual_scaled_pure",
         "vjepa2_gui_counterfactual_scaled_separation",
+        "vjepa2_gui_counterfactual_gated_smoke",
+        "vjepa2_gui_counterfactual_gated_scaled_pure",
+        "vjepa2_gui_counterfactual_gated_scaled_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

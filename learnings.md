@@ -976,7 +976,7 @@ The following work is not complete:
 - **Mistake:** We kept changing the predictor size and screen view while the target still contained a large amount of common screen content.
 - **Simple explanation:** The four futures mostly show the same software screen. The small action effect can get lost inside the much larger common screen.
 - **Correction:** Add a pure JEPA target that subtracts the average of the four future representations. The remaining target shows what is different for each action. Use the union of all changed-screen masks for every branch.
-- **Status:** Implemented. All 63 local tests passed. A Modal smoke test and a controlled pilot are pending.
+- **Status:** Tested. The pure counterfactual pilot reached 31.4% validation accuracy. This is above chance, but it did not pass the 40% gate.
 
 ### 108. The four action branches have an uneven action mix
 
@@ -984,4 +984,20 @@ The following work is not complete:
 - **Mistake:** We did not measure how often each action type occurs in each branch position before we interpreted the total four-way score.
 - **Simple explanation:** In the 7,667 training bundles, branch 0 is a typing action 96.1% of the time. Branches 2 and 3 are clicks about 98% of the time. The total score can hide weak click learning.
 - **Correction:** Keep the per-action scores. Treat click accuracy as a key result. Add controls that shuffle the action and the current screen. Do not use the total score by itself.
-- **Status:** The full training split was measured. The current-screen shuffle control is implemented. A Modal test is pending.
+- **Status:** Corrected. The full training split was measured. The Modal run recorded both shuffle controls.
+
+### 109. The counterfactual model used the action more than the screen
+
+- **Technical term:** Conditional-input bypass.
+- **Mistake:** The predictor could add action-based shifts and a pointer heatmap directly to its hidden state. This gave it a path that did not require the current-screen features.
+- **Simple explanation:** The pure counterfactual model reached 31.4%. A wrong action reduced the score by 10 points. A wrong current screen reduced it by only 1.6 points. The model learned a general action pattern more than a screen-specific result.
+- **Correction:** Add a visual-gated predictor. The action can only multiply visual features. It cannot add new action-only content. Keep both shuffle controls.
+- **Status:** Implemented. The architecture test and Modal pilot are pending.
+
+### 110. The first scaled counterfactual run did not reuse an old cache
+
+- **Technical term:** Frozen-feature cache provenance.
+- **Mistake:** We expected an old 8,000-transition cache to match the new letterbox run without checking its key and source run.
+- **Simple explanation:** The old letterbox run was made before cache support. The existing large cache used a different configuration. Modal encoded 8,500 screens again.
+- **Correction:** List the cache files and compare run configurations before we promise a cache hit. The new letterbox cache is `2d3715e204bdaa2ad33b5401fe59aa456b7b81fREDACTEDe91a0e5772.pt`.
+- **Status:** Corrected. The new cache is saved in the Modal volume. Later letterbox tests can reuse it.

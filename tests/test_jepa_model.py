@@ -7,6 +7,7 @@ from cua_jepa.jepa_model import (
     ActionTokenConditionedPredictor,
     TiledActionConditionedPredictor,
     IndependentTiledActionConditionedPredictor,
+    VisualGatedActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -59,6 +60,20 @@ def test_action_conditioning_changes_predictions() -> None:
     predictions = predictor(current, actions, spatial)
     assert predictions.shape == (2, 6, 32)
     assert not torch.allclose(predictions[0], predictions[1])
+
+
+def test_visual_gated_predictor_requires_visual_content() -> None:
+    torch.manual_seed(13)
+    predictor = VisualGatedActionConditionedPredictor(
+        latent_dim=32, hidden_dim=32, action_dim=32, layers=2, heads=4
+    )
+    actions = torch.stack((torch.zeros(32), torch.ones(32)))
+    spatial = torch.randn(2, 6, 3)
+    zero_predictions = predictor(torch.zeros(6, 32), actions, spatial)
+    assert torch.count_nonzero(zero_predictions) == 0
+    visual_predictions = predictor(torch.randn(6, 32), actions, spatial)
+    assert visual_predictions.shape == (2, 6, 32)
+    assert not torch.allclose(visual_predictions[0], visual_predictions[1])
 
 
 def test_action_token_predictor_keeps_visual_shape_and_uses_action() -> None:
