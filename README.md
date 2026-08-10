@@ -79,6 +79,48 @@ python -m modal run modal_train_model4.py --mode separation --seed 20260810
 
 Outputs persist in the `cua-jepa-training-v1` Modal Volume.
 
+## Full Model 4 continued training
+
+The full Model 4 run does not load a pilot checkpoint.
+
+It starts from these new components:
+
+- the pinned Qwen model revision;
+- a new online vision LoRA adapter;
+- a new target vision LoRA adapter;
+- a new action encoder;
+- a new predictor.
+
+LoRA is a small trainable adapter. The base Qwen weights stay frozen.
+
+The online LoRA adapter receives gradients. The target LoRA adapter receives an EMA update only. EMA means a slow moving copy of the online adapter.
+
+The run checks these rules before training:
+
+- base Qwen has zero trainable parameters;
+- target LoRA has zero trainable parameters;
+- the optimizer contains only online LoRA and the new heads;
+- online LoRA and target LoRA start with identical values;
+- training contains exactly 30,668 transitions;
+- validation contains exactly 2,000 transitions;
+- training and validation have no shared bundle or exact screenshot;
+- the test split is not in the training paths.
+
+Upload the audited training and validation data. Then run the LoRA smoke test:
+
+```powershell
+python scripts/upload_model4_full.py
+python -m modal run modal_train_model4.py --mode lora_smoke --seed 20260809
+```
+
+Start the full run only after the smoke test passes:
+
+```powershell
+python -m modal run modal_train_model4.py --mode model4_full --seed 20260809
+```
+
+This run uses all 7,667 training bundles for one pass. It does not use the test split.
+
 ## Corrected pilot result
 
 Both objectives ran with seeds `20260809` and `20260810`.

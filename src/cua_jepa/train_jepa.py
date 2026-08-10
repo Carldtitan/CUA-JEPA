@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import random
 import time
@@ -31,6 +32,7 @@ from cua_jepa.jepa_model import (
 @dataclass
 class JEPATrainConfig:
     model_id: str = "Qwen/Qwen3-VL-2B-Instruct"
+    model_revision: str = "89644892e4d85e24eaac8bacfd4f463576704203"
     seed: int = 20260809
     max_pixels: int = 262_144
     min_pixels: int = 65_536
@@ -41,9 +43,11 @@ class JEPATrainConfig:
     predictor_heads: int = 8
     learning_rate: float = 0.0002
     weight_decay: float = 0.01
-    ema_decay: float = 0.996
-    freeze_online_encoder: bool = True
-    freeze_target_encoder: bool = True
+    train_qwen_lora: bool = False
+    target_ema_decay: float = 0.996
+    require_fresh_start: bool = True
+    expected_train_transitions: int = 0
+    expected_validation_transitions: int = 0
     changed_patch_weight: float = 1.0
     unchanged_patch_weight: float = 0.05
     changed_token_threshold: float = 0.01
@@ -79,6 +83,7 @@ class JEPATrainConfig:
 
 def copy_online_adapter_to_target(model: torch.nn.Module, decay: float = 0.0) -> None:
     parameters = dict(model.named_parameters())
+    copied = 0
     with torch.no_grad():
         for name, target in parameters.items():
             if ".target." not in name:
@@ -88,11 +93,122 @@ def copy_online_adapter_to_target(model: torch.nn.Module, decay: float = 0.0) ->
             if online is None:
                 raise RuntimeError(f"Missing online EMA source for {name}")
             target.mul_(decay).add_(online, alpha=1.0 - decay)
+            copied += 1
+    if copied == 0:
+        raise RuntimeError("No target LoRA parameters were found for the EMA update")
 
 
 def _set_adapter(model: torch.nn.Module, name: str) -> None:
     if getattr(model, "peft_config", None):
         model.set_adapter(name)
+        for parameter_name, parameter in model.named_parameters():
+            if ".target." in parameter_name:
+                parameter.requires_grad_(False)
+            elif ".online." in parameter_name:
+                parameter.requires_grad_(name == "online")
+            else:
+                parameter.requires_grad_(False)
+
+
+def adapter_pair_max_difference(model: torch.nn.Module) -> float:
+    parameters = dict(model.named_parameters())
+    differences: list[float] = []
+    with torch.no_grad():
+        for name, target in parameters.items():
+            if ".target." not in name:
+                continue
+            online = parameters.get(name.replace(".target.", ".online."))
+            if online is None:
+                raise RuntimeError(f"Missing online adapter pair for {name}")
+            differences.append(float((target - online).abs().max().item()))
+    if not differences:
+        raise RuntimeError("No online/target LoRA pairs were found")
+    return max(differences)
+
+
+def _image_hashes(samples: Iterable[TransitionSample]) -> set[str]:
+    hashes: set[str] = set()
+    for sample in samples:
+        hashes.add(hashlib.sha256(sample.current_webp).hexdigest())
+        hashes.add(hashlib.sha256(sample.future_webp).hexdigest())
+    return hashes
+
+
+def validate_dataset_assignments(
+    train_samples: list[TransitionSample],
+    validation_samples: list[TransitionSample],
+    expected_train_transitions: int = 0,
+    expected_validation_transitions: int = 0,
+) -> dict[str, Any]:
+    train_splits = {sample.split for sample in train_samples}
+    validation_splits = {sample.split for sample in validation_samples}
+    if train_splits != {"train"}:
+        raise RuntimeError(f"Training data contains wrong splits: {sorted(train_splits)}")
+    if validation_splits != {"validation"}:
+        raise RuntimeError(
+            f"Validation data contains wrong splits: {sorted(validation_splits)}"
+        )
+    if expected_train_transitions and len(train_samples) != expected_train_transitions:
+        raise RuntimeError(
+            f"Expected {expected_train_transitions} training transitions, "
+            f"loaded {len(train_samples)}"
+        )
+    if expected_validation_transitions and (
+        len(validation_samples) != expected_validation_transitions
+    ):
+        raise RuntimeError(
+            f"Expected {expected_validation_transitions} validation transitions, "
+            f"loaded {len(validation_samples)}"
+        )
+    train_bundles = {sample.bundle_id for sample in train_samples}
+    validation_bundles = {sample.bundle_id for sample in validation_samples}
+    bundle_overlap = train_bundles & validation_bundles
+    if bundle_overlap:
+        raise RuntimeError(
+            f"Training and validation share {len(bundle_overlap)} bundle IDs"
+        )
+    image_overlap = _image_hashes(train_samples) & _image_hashes(validation_samples)
+    if image_overlap:
+        raise RuntimeError(
+            f"Training and validation share {len(image_overlap)} exact screenshots"
+        )
+    return {
+        "train_split": "train",
+        "validation_split": "validation",
+        "train_transitions": len(train_samples),
+        "validation_transitions": len(validation_samples),
+        "train_bundles": len(train_bundles),
+        "validation_bundles": len(validation_bundles),
+        "bundle_overlap": 0,
+        "exact_screenshot_overlap": 0,
+    }
+
+
+def approved_vision_parameters(
+    vision: torch.nn.Module, train_qwen_lora: bool
+) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter], list[torch.nn.Parameter]]:
+    online = [
+        parameter
+        for name, parameter in vision.named_parameters()
+        if ".online." in name and parameter.requires_grad
+    ]
+    target = [
+        parameter for name, parameter in vision.named_parameters() if ".target." in name
+    ]
+    base = [
+        parameter
+        for name, parameter in vision.named_parameters()
+        if ".online." not in name and ".target." not in name
+    ]
+    if train_qwen_lora and not online:
+        raise RuntimeError("No trainable Qwen online vision LoRA parameters were found")
+    if not train_qwen_lora and online:
+        raise RuntimeError("Qwen LoRA parameters exist in a frozen-Qwen run")
+    if any(parameter.requires_grad for parameter in target):
+        raise RuntimeError("Target LoRA parameters must never receive gradients")
+    if any(parameter.requires_grad for parameter in base):
+        raise RuntimeError("Base Qwen parameters must remain frozen")
+    return online, target, base
 
 
 def _vision_config(vision: torch.nn.Module):
@@ -106,11 +222,14 @@ def _vision_config(vision: torch.nn.Module):
 def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
     from transformers import AutoImageProcessor, Qwen3VLForConditionalGeneration
 
-    processor = AutoImageProcessor.from_pretrained(config.model_id, use_fast=False)
+    processor = AutoImageProcessor.from_pretrained(
+        config.model_id, revision=config.model_revision, use_fast=False
+    )
     processor.max_pixels = config.max_pixels
     processor.min_pixels = config.min_pixels
     full_model = Qwen3VLForConditionalGeneration.from_pretrained(
         config.model_id,
+        revision=config.model_revision,
         dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
         attn_implementation="sdpa",
@@ -120,7 +239,7 @@ def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
     gc.collect()
     vision.to(device)
 
-    if config.freeze_online_encoder:
+    if not config.train_qwen_lora:
         vision.requires_grad_(False)
         vision.eval()
         return processor, vision
@@ -136,6 +255,8 @@ def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
     vision.add_adapter("target", lora)
     copy_online_adapter_to_target(vision, decay=0.0)
     _set_adapter(vision, "online")
+    if adapter_pair_max_difference(vision) != 0.0:
+        raise RuntimeError("Online and target LoRA adapters did not start identically")
     return processor, vision
 
 
@@ -340,6 +461,8 @@ def train_model4_jepa(
         raise RuntimeError("Model 4 JEPA training requires a CUDA GPU")
     device = torch.device("cuda")
     output_path = Path(output_dir)
+    if config.require_fresh_start and output_path.exists() and any(output_path.iterdir()):
+        raise RuntimeError(f"Fresh-start output directory is not empty: {output_path}")
     output_path.mkdir(parents=True, exist_ok=True)
     train_samples = load_transition_tars(train_tar_paths, limit=config.max_train_transitions)
     validation_samples = load_transition_tars(
@@ -347,6 +470,12 @@ def train_model4_jepa(
     )
     if not train_samples or not validation_samples:
         raise RuntimeError("Both training and validation transitions are required")
+    dataset_audit = validate_dataset_assignments(
+        train_samples,
+        validation_samples,
+        expected_train_transitions=config.expected_train_transitions,
+        expected_validation_transitions=config.expected_validation_transitions,
+    )
     train_bundles = [
         branches for branches in group_by_bundle(train_samples).values() if len(branches) == 4
     ]
@@ -365,17 +494,47 @@ def train_model4_jepa(
         heads=config.predictor_heads,
     ).to(device)
 
-    online_parameters = [
-        parameter
-        for name, parameter in vision.named_parameters()
-        if ".online." in name and parameter.requires_grad
-    ]
-    if not config.freeze_online_encoder and not online_parameters:
-        raise RuntimeError("No trainable Qwen online vision LoRA parameters were found")
+    online_parameters, target_parameters, base_parameters = approved_vision_parameters(
+        vision, config.train_qwen_lora
+    )
     head_parameters = list(action_encoder.parameters()) + list(predictor.parameters())
     trainable = online_parameters + head_parameters
     optimizer = torch.optim.AdamW(
         trainable, lr=config.learning_rate, weight_decay=config.weight_decay
+    )
+    optimizer_parameter_ids = {
+        id(parameter)
+        for group in optimizer.param_groups
+        for parameter in group["params"]
+    }
+    if optimizer_parameter_ids != {id(parameter) for parameter in trainable}:
+        raise RuntimeError("Optimizer parameter scope does not match the approved parameters")
+    if optimizer_parameter_ids & {id(parameter) for parameter in base_parameters}:
+        raise RuntimeError("Optimizer contains frozen base Qwen parameters")
+    if optimizer_parameter_ids & {id(parameter) for parameter in target_parameters}:
+        raise RuntimeError("Optimizer contains target LoRA parameters")
+    initialization_audit = {
+        "fresh_start": True,
+        "model_id": config.model_id,
+        "model_revision": config.model_revision,
+        "train_qwen_lora": config.train_qwen_lora,
+        "base_qwen_parameter_count": sum(p.numel() for p in base_parameters),
+        "base_qwen_trainable_parameter_count": sum(
+            p.numel() for p in base_parameters if p.requires_grad
+        ),
+        "online_lora_parameter_count": sum(p.numel() for p in online_parameters),
+        "target_lora_parameter_count": sum(p.numel() for p in target_parameters),
+        "target_lora_trainable_parameter_count": sum(
+            p.numel() for p in target_parameters if p.requires_grad
+        ),
+        "head_parameter_count": sum(p.numel() for p in head_parameters),
+        "optimizer_parameter_count": sum(p.numel() for p in trainable),
+        "initial_online_target_max_difference": (
+            adapter_pair_max_difference(vision) if config.train_qwen_lora else None
+        ),
+    }
+    (output_path / "initialization_audit.json").write_text(
+        json.dumps(initialization_audit, indent=2), encoding="utf-8"
     )
     optimizer.zero_grad(set_to_none=True)
 
@@ -419,7 +578,7 @@ def train_model4_jepa(
             current_inputs = processor(images=[current], return_tensors="pt")
             current_grid = current_inputs["image_grid_thw"].to(device)
             current_pixels = current_inputs["pixel_values"].to(device)
-            if config.freeze_online_encoder:
+            if not config.train_qwen_lora:
                 with torch.no_grad():
                     current_tokens = _encode(vision, "online", current_pixels, current_grid)
             else:
@@ -511,8 +670,11 @@ def train_model4_jepa(
                 clip_grad_norm_(trainable, max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-                if not config.freeze_online_encoder and not config.freeze_target_encoder:
-                    copy_online_adapter_to_target(vision, decay=config.ema_decay)
+                if config.train_qwen_lora:
+                    copy_online_adapter_to_target(
+                        vision, decay=config.target_ema_decay
+                    )
+                    _set_adapter(vision, "online")
             if step == 1 or step % config.log_every == 0:
                 record = {
                     "step": step,
@@ -582,8 +744,9 @@ def train_model4_jepa(
         clip_grad_norm_(trainable, max_norm=1.0)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-        if not config.freeze_online_encoder and not config.freeze_target_encoder:
-            copy_online_adapter_to_target(vision, decay=config.ema_decay)
+        if config.train_qwen_lora:
+            copy_online_adapter_to_target(vision, decay=config.target_ema_decay)
+            _set_adapter(vision, "online")
 
     final_train = evaluate_action_sensitivity(
         train_samples,
@@ -619,6 +782,8 @@ def train_model4_jepa(
     )
     metrics: dict[str, Any] = {
         "config": asdict(config),
+        "dataset_audit": dataset_audit,
+        "initialization_audit": initialization_audit,
         "train_transitions": len(train_samples),
         "train_bundles": len(train_bundles),
         "validation_transitions": len(validation_samples),
@@ -643,6 +808,10 @@ def train_model4_jepa(
         "collapse_checks": collapse_checks,
         "stopped_for_collapse": stopped_for_collapse,
         "trainable_online_lora_parameters": sum(p.numel() for p in online_parameters),
+        "target_lora_parameters": sum(p.numel() for p in target_parameters),
+        "final_online_target_max_difference": (
+            adapter_pair_max_difference(vision) if config.train_qwen_lora else None
+        ),
         "trainable_head_parameters": sum(p.numel() for p in head_parameters),
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / (1024**3),
     }

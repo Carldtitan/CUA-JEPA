@@ -504,9 +504,57 @@ The local source metrics are:
 - **Correction:** Save per-bundle predictions and correctness. Use a bundle bootstrap for confidence intervals.
 - **Status:** Open evaluation improvement.
 
+### 57. A pilot checkpoint is not a full training starting point
+
+- **Technical term:** Unplanned warm start.
+- **Mistake:** We almost used the best pilot checkpoint to start full Model 4 training.
+- **Simple explanation:** The pilot used a small data subset. It was an architecture test, not a trained base for the final run.
+- **Correction:** Start full Model 4 from the original Qwen model. Create new LoRA adapters and new heads.
+- **Status:** Fixed in the full-run code.
+
+### 58. A model name alone does not give an identical starting point
+
+- **Technical term:** Model revision drift.
+- **Mistake:** The code selected the Qwen model name but did not select an exact model revision.
+- **Simple explanation:** Files under one model name can change later.
+- **Correction:** Pin Qwen revision `89644892e4d85e24eaac8bacfd4f463576704203` in the code and config.
+- **Status:** Fixed.
+
+### 59. The target LoRA adapter did not receive its planned EMA update
+
+- **Technical term:** Broken exponential moving average update.
+- **Mistake:** The old condition skipped EMA when the target adapter was frozen.
+- **Simple explanation:** A target adapter must not receive gradients. It must still receive the slow copy update.
+- **Correction:** Update target LoRA from online LoRA after each optimizer step. Keep target LoRA outside the optimizer.
+- **Status:** Fixed and covered by a regression test.
+
+### 60. Pilot data staging was not full data staging
+
+- **Technical term:** Dataset scope mismatch.
+- **Mistake:** The Modal pilot volume contained only 1,952 training transitions and 500 validation transitions.
+- **Simple explanation:** A full run on that volume would still use only pilot data.
+- **Correction:** Add a separate full-data path. Require 30,668 training transitions and 2,000 validation transitions.
+- **Status:** Fixed in the full-run code. Upload remains a required run step.
+
+### 61. The phrase `unfreeze Qwen` was too broad
+
+- **Technical term:** Parameter-scope ambiguity.
+- **Mistake:** The phrase could mean training all Qwen weights or training only LoRA.
+- **Simple explanation:** These two methods have very different cost and risk.
+- **Correction:** Keep all base Qwen weights frozen. Train only the online Qwen vision LoRA adapter.
+- **Status:** Fixed in the full-run design.
+
+### 62. An unused global TensorFlow install can break tests
+
+- **Technical term:** Dependency contamination.
+- **Mistake:** Transformers found a broken global TensorFlow and protobuf combination during test import.
+- **Simple explanation:** This project does not use TensorFlow, but the global install still stopped the tests.
+- **Correction:** Set `USE_TF=0` for these tests. Keep the Modal training image limited to required packages.
+- **Status:** Local workaround active.
+
 ## Current corrections in the training code
 
-The current Model 4 Stage 2 code now does these actions:
+The controlled Model 4 pilot code now does these actions:
 
 1. Freeze the complete Qwen visual encoder.
 2. Train the action encoder and predictor only.
@@ -523,6 +571,19 @@ The current Model 4 Stage 2 code now does these actions:
 13. Stop after repeated collapse checks fail.
 14. Support explicit random seeds for repeat runs.
 
+The full Model 4 code adds these safeguards:
+
+1. Load the exact pinned Qwen revision.
+2. Do not load a pilot checkpoint.
+3. Keep the base Qwen weights frozen.
+4. Train a new online Qwen vision LoRA adapter.
+5. Update a new target LoRA adapter with EMA only.
+6. Start the action encoder and predictor with new random weights.
+7. Check the optimizer parameter list before training.
+8. Require the exact full training and validation counts.
+9. Reject bundle or exact screenshot overlap between training and validation.
+10. Keep the test split out of the Modal training paths.
+
 ## Open work
 
 The following work is not complete:
@@ -535,3 +596,5 @@ The following work is not complete:
 6. Collect more non-search typing states.
 7. Improve or rebalance scroll transitions.
 8. Test on real, unseen software.
+9. Run and assess the trainable-LoRA smoke test.
+10. Run full Model 4 only after the smoke test passes.

@@ -106,7 +106,9 @@ def check_processor() -> dict:
 
     sample = load_transition_tar("/opt/cua-jepa/train.tar", limit=1)[0]
     processor = AutoImageProcessor.from_pretrained(
-        "Qwen/Qwen3-VL-2B-Instruct", use_fast=False
+        "Qwen/Qwen3-VL-2B-Instruct",
+        revision="89644892e4d85e24eaac8bacfd4f463576704203",
+        use_fast=False,
     )
     processor.max_pixels = 262_144
     processor.min_pixels = 65_536
@@ -122,7 +124,7 @@ def check_processor() -> dict:
     gpu="L4",
     cpu=4,
     memory=16_384,
-    timeout=2 * 60 * 60,
+    timeout=4 * 60 * 60,
     scaledown_window=60,
     volumes={
         "/training": output_volume,
@@ -140,6 +142,17 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
         config.max_steps = 2
         config.max_train_transitions = 8
         config.max_validation_transitions = 8
+        config.evaluation_bundles = 1
+        config.validation_evaluation_bundles = 0
+        config.log_every = 1
+    elif mode == "lora_smoke":
+        config.train_qwen_lora = True
+        config.action_separation_weight = 0.25
+        config.max_steps = 2
+        config.max_train_transitions = 8
+        config.max_validation_transitions = 8
+        config.expected_train_transitions = 8
+        config.expected_validation_transitions = 8
         config.evaluation_bundles = 1
         config.validation_evaluation_bundles = 0
         config.log_every = 1
@@ -165,9 +178,24 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
         config.validation_evaluation_bundles = 0
         config.action_separation_weight = 0.0 if mode == "pure" else 0.25
         config.log_every = 25
+    elif mode == "model4_full":
+        config.train_qwen_lora = True
+        config.action_separation_weight = 0.25
+        config.max_steps = 7_667
+        config.max_train_transitions = 30_668
+        config.max_validation_transitions = 2_000
+        config.expected_train_transitions = 30_668
+        config.expected_validation_transitions = 2_000
+        config.evaluation_bundles = 25
+        config.validation_evaluation_bundles = 0
+        config.collapse_check_every = 500
+        config.collapse_check_bundles = 25
+        config.collapse_check_start_step = 1_000
+        config.log_every = 100
     elif mode != "pilot":
         raise ValueError(
-            "mode must be 'smoke', 'pilot', 'quick', 'pure', 'separation', or 'stage2'"
+            "mode must be 'smoke', 'lora_smoke', 'pilot', 'quick', 'pure', "
+            "'separation', 'stage2', or 'model4_full'"
         )
     seed_label = f"-seed{config.seed}"
     run_id = datetime.now(timezone.utc).strftime(
@@ -176,7 +204,7 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
     output_dir = Path("/training") / run_id
     train_paths = ["/opt/cua-jepa/train.tar"]
     validation_paths = ["/opt/cua-jepa/validation.tar"]
-    if mode in {"quick", "pure", "separation", "stage2"}:
+    if mode in {"quick", "pure", "separation", "stage2", "lora_smoke"}:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
         ]
@@ -184,6 +212,23 @@ def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
             str(path)
             for path in sorted(Path("/dataset/model4-stage2/validation").glob("*.tar"))
         ]
+    elif mode == "model4_full":
+        train_paths = [
+            str(path)
+            for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
+        ]
+        validation_paths = [
+            str(path)
+            for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
+        ]
+        if len(train_paths) != 320 or len(validation_paths) != 20:
+            raise RuntimeError(
+                "Full Model 4 data is incomplete: "
+                f"{len(train_paths)} train tar files and "
+                f"{len(validation_paths)} validation tar files"
+            )
+        if any("/test/" in path for path in train_paths + validation_paths):
+            raise RuntimeError("The final test split entered a training path")
     metrics = train_model4_jepa(
         train_tar_paths=train_paths,
         validation_tar_paths=validation_paths,
