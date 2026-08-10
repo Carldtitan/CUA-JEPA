@@ -97,6 +97,7 @@ class EncodedBundle:
     app: str
     split: str
     actions: list[dict[str, Any]]
+    spatial_actions: list[dict[str, Any]]
     changed_pixel_fractions: list[float]
     current: torch.Tensor
     targets: torch.Tensor
@@ -123,6 +124,24 @@ def letterbox_gui_image(image: Image.Image, size: int = 256) -> Image.Image:
     )
     result = Image.new("RGB", (size, size), (124, 116, 104))
     result.paste(resized, ((size - resized.width) // 2, (size - resized.height) // 2))
+    return result
+
+
+def letterbox_action_coordinates(
+    action: dict[str, Any], source_width: int, source_height: int, size: int = 256
+) -> dict[str, Any]:
+    """Move normalized pointer coordinates into the letterboxed square."""
+
+    result = dict(action)
+    scale = min(size / source_width, size / source_height)
+    content_width = max(1, round(source_width * scale))
+    content_height = max(1, round(source_height * scale))
+    left = (size - content_width) // 2
+    top = (size - content_height) // 2
+    x_value = float(action.get("x_normalized", 0.0) or 0.0)
+    y_value = float(action.get("y_normalized", 0.0) or 0.0)
+    result["x_normalized"] = (left + x_value * content_width) / size
+    result["y_normalized"] = (top + y_value * content_height) / size
     return result
 
 
@@ -192,6 +211,12 @@ def encode_bundles(
                     app=branches[0].app,
                     split=branches[0].split,
                     actions=[dict(branch.action) for branch in branches],
+                    spatial_actions=[
+                        letterbox_action_coordinates(
+                            branch.action, current_image.width, current_image.height
+                        )
+                        for branch in branches
+                    ],
                     changed_pixel_fractions=[
                         float(branch.changed_pixel_fraction) for branch in branches
                     ],
@@ -319,7 +344,7 @@ def evaluate_encoded_bundles(
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
-            spatial = action_spatial_features(bundle.actions, grid, device)
+            spatial = action_spatial_features(bundle.spatial_actions, grid, device)
             predicted_deltas = predictor(current, embeddings, spatial)
             predictions = reconstruct_future_latent(current, predicted_deltas)
             shared_weights = weights.max(dim=0).values
@@ -640,7 +665,7 @@ def train_vjepa2_gui_pilot(
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
-            spatial = action_spatial_features(bundle.actions, grid, device)
+            spatial = action_spatial_features(bundle.spatial_actions, grid, device)
             predicted_deltas = predictor(current, embeddings, spatial)
             target_deltas = latent_delta(current, targets)
             changed_loss = latent_delta_loss(

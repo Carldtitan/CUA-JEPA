@@ -8,6 +8,7 @@ from cua_jepa.train_vjepa2 import (
     balanced_training_epoch,
     bundle_bootstrap_ci95,
     gui_image_video,
+    letterbox_action_coordinates,
     letterbox_gui_image,
     pilot_success,
     select_balanced_encoded_bundles,
@@ -21,6 +22,7 @@ def _bundle(bundle_id: str, app: str) -> EncodedBundle:
         app=app,
         split="validation",
         actions=[{"kind": "click"}] * 4,
+        spatial_actions=[{"kind": "click"}] * 4,
         changed_pixel_fractions=[0.3] * 4,
         current=torch.zeros(256, 1024),
         targets=torch.zeros(4, 256, 1024),
@@ -40,6 +42,19 @@ def test_letterbox_keeps_both_edges_of_wide_gui() -> None:
     video = gui_image_video(image)
     assert video.shape == (2, 3, 256, 256)
     assert torch.equal(video[0], video[1])
+
+
+def test_letterbox_moves_pointer_coordinates_with_gui_content() -> None:
+    top_left = letterbox_action_coordinates(
+        {"kind": "click", "x_normalized": 0.0, "y_normalized": 0.0}, 1280, 720
+    )
+    bottom_right = letterbox_action_coordinates(
+        {"kind": "click", "x_normalized": 1.0, "y_normalized": 1.0}, 1280, 720
+    )
+    assert top_left["x_normalized"] == 0.0
+    assert top_left["y_normalized"] == 56 / 256
+    assert bottom_right["x_normalized"] == 1.0
+    assert bottom_right["y_normalized"] == 200 / 256
 
 
 def test_select_balanced_encoded_bundles_round_robins_apps() -> None:

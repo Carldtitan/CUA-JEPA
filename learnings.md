@@ -851,7 +851,15 @@ The local source metrics are:
 - **Mistake:** The predictor used action-based normalization and a spatial heatmap, but it did not put the action into the transformer token sequence.
 - **Simple explanation:** Every layer received action information, but the attention operation could not attend to a separate action token as V-JEPA 2-AC does.
 - **Correction:** Add a predictor that prepends one learned action token. Keep the spatial click map and layer-wise action conditioning.
-- **Status:** Implemented locally. All 51 local tests pass. The controlled Modal pilot is next.
+- **Status:** Tested. The action-token model reached 38.0%, below the 40.4% AdaLN model. Do not use it as the current best model.
+
+### 99. Letterboxing moved the screen but did not move the click heatmap
+
+- **Technical term:** Coordinate-frame mismatch.
+- **Mistake:** The image moved into a padded square, but pointer coordinates stayed in the original wide-screen coordinate frame.
+- **Simple explanation:** A click near the top of the real screen pointed into the top padding in the model input.
+- **Correction:** Transform click and type coordinates into the same letterboxed coordinate frame before making the spatial heatmap.
+- **Status:** Corrected locally. All 52 local tests pass. The controlled Modal rerun is next.
 
 ## Current corrections in the training code
 
