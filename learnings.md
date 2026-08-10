@@ -1384,4 +1384,4 @@ The following work is not complete:
 - **Mistake:** The training and evaluation loops did not release the prior input and output tensors before they created the next inputs. The 25-step pilot printed temporary out-of-memory allocation warnings.
 - **Simple explanation:** The next image could enter GPU memory before the prior image left it.
 - **Correction:** Delete each input, generated output, and training output after use. Count non-finite losses and gradients. Stop with a clear reason if either count becomes nonzero.
-- **Status:** Corrected after the paired pilot and before full SFT. A repeated smoke test is pending.
+- **Status:** Corrected after the paired pilot. The repeated paired smoke completed without a memory warning. Both models reported zero non-finite losses and gradients. Full SFT is active.
