@@ -1056,4 +1056,28 @@ The following work is not complete:
 - **Mistake:** The same seed controlled model initialization and the held-out bundle selection.
 - **Simple explanation:** A repeat with a new model seed would also use different test examples. That is not a clean repeat.
 - **Correction:** Use a fixed data-split seed. Use a separate model seed. Put the split seed in the cache key and data audit. Validate the exact cached bundle IDs before reuse.
-- **Status:** Corrected before the repeat run. The first result used split seed 20260811. Later model seeds will use the same held-out bundles.
+- **Status:** Corrected and verified. Both model seeds used the same 125 held-out bundles. Seed 20260811 reached 69.6%. Seed 20260812 reached 72.4%. The mean is 71.0%.
+
+### 118. One unseen-application score hid strong action learning
+
+- **Technical term:** Out-of-domain generalization gap.
+- **Mistake:** We treated the 40.4% Jira and Slack score mainly as an architecture-learning failure.
+- **Simple explanation:** The model learned the training applications well. It had more difficulty with new software styles.
+- **Correction:** Report both tests. Use a same-app holdout to measure action learning. Use Jira and Slack to measure transfer to unseen applications.
+- **Status:** Corrected. The two-seed same-app mean is 71.0%. The two-seed unseen-application mean is 39.6%. The gap is 31.4 points.
+
+### 119. The first all-data cache estimate used the wrong data type
+
+- **Technical term:** Feature-cache precision.
+- **Mistake:** We estimated cache size as if V-JEPA features were stored in float32.
+- **Simple explanation:** The code already stores features in bfloat16. Bfloat16 uses half as many bytes.
+- **Correction:** Read the encoder output conversion before estimating storage. Use the measured 5.2 GB size for 2,125 bundles to estimate the full cache.
+- **Status:** Corrected. The all-data cache estimate is about 20 GB, not 40 GB.
+
+### 120. Rejected feature caches exceeded the storage limit
+
+- **Technical term:** Derived-artifact retention.
+- **Mistake:** Old feature caches from rejected tests remained in the Modal volume. The V-JEPA cache folder grew to about 34.4 GB.
+- **Simple explanation:** Saved copies of calculations used more storage than the 30 GB limit.
+- **Correction:** Keep the active unseen-application cache. Remove obsolete and duplicated caches after model artifacts are verified. Check measured size before a large run.
+- **Status:** Corrected. Three obsolete caches totaling about 29.2 GB were removed. Saved models and metrics were not removed. The remaining V-JEPA caches use about 5.2 GB.

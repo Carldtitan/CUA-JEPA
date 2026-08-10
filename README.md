@@ -97,6 +97,8 @@ python -m modal run modal_train_model4.py --mode vjepa2_gui_smoke --seed 2026081
 python -m modal run modal_train_model4.py --mode vjepa2_gui_pure --seed 20260811
 python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_separation --seed 20260811
 python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_separation --seed 20260812
+python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_same_app_diagnostic --seed 20260811
+python -m modal run modal_train_model4.py --mode vjepa2_gui_scaled_same_app_diagnostic --seed 20260812
 ```
 
 The scaled run uses 8,000 balanced training transitions. It evaluates 500 transitions from Jira and Slack. Neither application is in training.
@@ -112,12 +114,23 @@ The scaled run uses 8,000 balanced training transitions. It evaluates 500 transi
 | Two separate high-detail views, seed 20260812 | 39.6% | 18.8 points | 33.8% | 41.6% |
 | Two separate high-detail views mean | 38.7% | 17.7 points | 35.5% | 38.9% |
 | Wider separate-view predictor, seed 20260811 | 38.2% | 16.8 points | 36.0% | 35.4% |
+| Same-app holdout, seed 20260811 | 69.6% | 58.0 points | 55.9% | 66.3% |
+| Same-app holdout, seed 20260812 | 72.4% | 61.6 points | 59.1% | 67.4% |
+| Same-app holdout mean | 71.0% | 59.8 points | 57.5% | 66.9% |
 
 Chance accuracy is 25%. The 95% bundle intervals are 37.2% to 43.6% and 35.8% to 42.0% for the two scaled runs.
 
 The result shows repeatable action learning. It does not show that pure JEPA regression is sufficient. The strong runs include an InfoNCE action-separation loss.
 
-Verified local artifacts are under `artifacts/vjepa2-gui-*`. The same artifacts remain in the persistent Modal Volume.
+The same-app diagnostic uses 125 held-out bundles from the eight training applications. It has no shared bundle IDs or exact screenshots. It shows that the predictor learns screen-specific action effects. It does not measure transfer to new applications. The Jira and Slack result remains the unseen-application result.
+
+The all-data V-JEPA run uses all 30,668 training transitions and all 2,000 unseen-application validation transitions:
+
+```powershell
+python -m modal run modal_train_model4.py --mode vjepa2_gui_full_data_separation --seed 20260811
+```
+
+Verified local artifacts are under `artifacts/vjepa2-gui-*` and `artifacts/same-app-*`. The same artifacts remain in the persistent Modal Volume.
 
 ## Full Model 4 continued training
 

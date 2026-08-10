@@ -384,6 +384,7 @@ def run_vjepa2_gui_pilot(
         "qwen_fusion_scaled_separation",
         "same_app_smoke",
         "scaled_same_app_diagnostic",
+        "full_data_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -480,6 +481,17 @@ def run_vjepa2_gui_pilot(
             config.action_separation_weight = 0.25
         elif mode == "scaled_same_app_diagnostic":
             config.dataset_split_strategy = "same_app_holdout"
+        elif mode == "full_data_separation":
+            config.max_train_transitions = 30_668
+            config.max_validation_transitions = 2_000
+            config.max_steps = 7_667
+            config.encoder_bundle_batch_size = 8
+            config.train_evaluation_bundles = 25
+            config.validation_evaluation_bundles = 500
+            config.evaluation_steps = (0, 100, 250, 500, 1_000, 2_000, 4_000, 7_667)
+            config.log_every = 100
+            config.approved_cost_limit_usd = 2.0
+            config.max_runtime_seconds = 65 * 60
 
     if mode in {
         "scaled_separation",
@@ -494,6 +506,7 @@ def run_vjepa2_gui_pilot(
         "qwen_fusion_scaled_separation",
         "same_app_smoke",
         "scaled_same_app_diagnostic",
+        "full_data_separation",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -598,6 +611,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_qwen_fusion_scaled_separation",
         "vjepa2_gui_same_app_smoke",
         "vjepa2_gui_scaled_same_app_diagnostic",
+        "vjepa2_gui_full_data_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(
