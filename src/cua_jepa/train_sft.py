@@ -398,6 +398,14 @@ def _gradient_norm(parameters: Iterable[torch.nn.Parameter]) -> float:
     return float(torch.stack(values).norm(2).item()) if values else 0.0
 
 
+def _nonfinite_gradient_count(parameters: Iterable[torch.nn.Parameter]) -> int:
+    return sum(
+        int(not torch.isfinite(parameter.grad).all().item())
+        for parameter in parameters
+        if parameter.grad is not None
+    )
+
+
 @torch.no_grad()
 def evaluate_policy(
     model,
@@ -453,6 +461,7 @@ def evaluate_policy(
                 **score,
             }
         )
+        del generated, inputs
     summary = summarize_scores(predictions)
     summary.update({"event": event, "step": step})
     write_json(output_path / f"{event}_metrics.json", summary)
@@ -583,6 +592,8 @@ def train_policy_sft(
     losses = []
     recent_losses = []
     recent_action_losses: dict[str, list[float]] = {}
+    nonfinite_loss_count = 0
+    nonfinite_gradient_count = 0
     optimizer.zero_grad(set_to_none=True)
     model.train()
     stop_reason = "maximum_steps_completed"
@@ -596,17 +607,28 @@ def train_policy_sft(
         )
         output = model(**inputs)
         raw_loss = output.loss
+        if not torch.isfinite(raw_loss).item():
+            nonfinite_loss_count += 1
+            stop_reason = "nonfinite_loss"
+            del output, inputs, raw_loss
+            break
         (raw_loss / config.gradient_accumulation_steps).backward()
         loss_value = float(raw_loss.detach().item())
         losses.append(loss_value)
         recent_losses.append(loss_value)
         recent_action_losses.setdefault(record["action_kind"], []).append(loss_value)
         micro_step += 1
+        del output, inputs, raw_loss
         if micro_step % config.gradient_accumulation_steps:
             continue
 
         vision_gradient_norm = _gradient_norm(vision_parameters)
         language_gradient_norm = _gradient_norm(language_parameters)
+        nonfinite_gradient_count = _nonfinite_gradient_count(trainable)
+        if nonfinite_gradient_count:
+            stop_reason = "nonfinite_gradient"
+            optimizer.zero_grad(set_to_none=True)
+            break
         total_gradient_norm = float(torch.nn.utils.clip_grad_norm_(trainable, 1.0).item())
         optimizer.step()
         scheduler.step()
@@ -625,6 +647,8 @@ def train_policy_sft(
                 "vision_lora_gradient_norm": vision_gradient_norm,
                 "language_lora_gradient_norm": language_gradient_norm,
                 "total_gradient_norm_before_clip": total_gradient_norm,
+                "nonfinite_loss_count": nonfinite_loss_count,
+                "nonfinite_gradient_count": nonfinite_gradient_count,
                 "elapsed_seconds": time.perf_counter() - started,
                 "peak_cuda_memory_gib": (
                     torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
@@ -684,6 +708,8 @@ def train_policy_sft(
         "steps": optimizer_step,
         "micro_steps": micro_step,
         "stop_reason": stop_reason,
+        "nonfinite_loss_count": nonfinite_loss_count,
+        "nonfinite_gradient_count": nonfinite_gradient_count,
         "mean_train_loss": sum(losses) / max(len(losses), 1),
         "first_20_loss": sum(losses[:20]) / max(min(len(losses), 20), 1),
         "last_20_loss": sum(losses[-20:]) / max(min(len(losses), 20), 1),

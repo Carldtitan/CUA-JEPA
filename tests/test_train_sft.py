@@ -4,6 +4,7 @@ import torch
 
 from cua_jepa.train_sft import (
     SFTTrainConfig,
+    _nonfinite_gradient_count,
     action_prompt,
     find_last_subsequence,
     runtime_audit,
@@ -53,6 +54,14 @@ def test_trainable_state_hash_changes_only_with_trainable_parameters() -> None:
     with torch.no_grad():
         module.weight.add_(1)
     assert trainable_state_sha256(module) != before
+
+
+def test_nonfinite_gradient_count_detects_bad_gradients() -> None:
+    first = torch.nn.Parameter(torch.ones(2))
+    second = torch.nn.Parameter(torch.ones(2))
+    first.grad = torch.tensor([1.0, 2.0])
+    second.grad = torch.tensor([float("nan"), 1.0])
+    assert _nonfinite_gradient_count([first, second]) == 1
 
 
 def test_small_evaluation_set_balances_operating_systems() -> None:

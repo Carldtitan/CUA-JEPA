@@ -1369,3 +1369,19 @@ The following work is not complete:
 - **Simple explanation:** The test failed, but the shell continued and pushed the bad test fixture.
 - **Correction:** Fix the two test weights. Run tests in a separate command before commits. For combined PowerShell commands, enable native-command error stopping.
 - **Status:** The test fixtures are corrected in the next commit. The training code and active Model 3 run were not affected.
+
+### 157. The AgentNet scroll subgroup is too small for a stable score
+
+- **Technical term:** Subgroup sample-size uncertainty.
+- **Mistake:** The selected SFT data has only 6 scroll examples in training and 2 scroll examples in validation.
+- **Simple explanation:** One correct scroll answer changes the validation scroll score by 50 percentage points.
+- **Correction:** Keep the matched data for the three-model MVP. Report the scroll count beside its score. Do not claim that one run proves scroll quality. A later data version should add more scroll examples.
+- **Status:** Recorded before SFT. This does not invalidate the overall matched comparison, but it limits the scroll-only result.
+
+### 158. The SFT loop kept prior GPU tensors during the next allocation
+
+- **Technical term:** Tensor-lifetime memory pressure.
+- **Mistake:** The training and evaluation loops did not release the prior input and output tensors before they created the next inputs. The 25-step pilot printed temporary out-of-memory allocation warnings.
+- **Simple explanation:** The next image could enter GPU memory before the prior image left it.
+- **Correction:** Delete each input, generated output, and training output after use. Count non-finite losses and gradients. Stop with a clear reason if either count becomes nonzero.
+- **Status:** Corrected after the paired pilot and before full SFT. A repeated smoke test is pending.
