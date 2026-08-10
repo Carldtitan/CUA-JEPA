@@ -1336,4 +1336,20 @@ The following work is not complete:
 - **Mistake:** The existing collapse rule focused on action separation. It did not directly flag a large fall in target visual variance.
 - **Simple explanation:** Model 3 cannot know which of four futures will occur. Its visual representations started becoming nearly identical instead.
 - **Correction:** Record target variance against its step-zero value. Interpret Model 4 against both Model 3 and Model 2. Model 4 must beat Model 2 before we claim that JEPA improved the final policy.
-- **Status:** Detected at step 500 of the full Model 3 run. Target variance fell from 0.0952 to 0.000345. The run continues so the agreed no-action control remains complete.
+- **Status:** Detected at step 500. The first run later stopped at step 1,722 because of a non-finite gradient. It is not a complete Model 3 run.
+
+### 153. I named the Model 3 stop cause before checking it
+
+- **Technical term:** Unverified stop-cause attribution.
+- **Mistake:** I first said that Model 3 reached its time limit when the log only showed that final evaluation started at step 1,722.
+- **Simple explanation:** The run stopped training early, but the log did not yet show why.
+- **Correction:** Read the saved `stop_reason.json` before naming the cause. Report an early stop as unconfirmed until that file is available.
+- **Status:** Corrected. `stop_reason.json` confirmed a non-finite gradient at step 1,722, not a time limit.
+
+### 154. Model 3 used an impossible action-separation objective
+
+- **Technical term:** Contradictory control objective.
+- **Mistake:** Model 3 gave all four branches the same `NO_ACTION` input but kept the action-separation loss.
+- **Simple explanation:** The loss asked one identical input to select four different future screens. The model could not solve this task.
+- **Correction:** Set the Model 3 action-separation weight to zero. Keep latent JEPA regression, the same four future screens, the same Qwen visual LoRA, and the same training order. Keep action separation only in action-conditioned Model 4.
+- **Status:** Corrected in code after the first full attempt stopped with a non-finite gradient. A clean Model 3 restart is pending.

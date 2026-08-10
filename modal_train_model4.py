@@ -215,6 +215,7 @@ def run_model4_training(
         config.action_separation_weight = 0.25
         if mode == "model3_lora_smoke":
             config.training_action_assignment = "no_action"
+            config.action_separation_weight = 0.0
             config.stop_on_collapse = False
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -258,6 +259,7 @@ def run_model4_training(
         config.action_separation_weight = 0.25
         if mode == "model3_full":
             config.training_action_assignment = "no_action"
+            config.action_separation_weight = 0.0
             config.stop_on_collapse = False
         config.max_steps = 7_667
         config.max_train_transitions = 30_668

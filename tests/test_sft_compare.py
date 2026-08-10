@@ -137,7 +137,6 @@ def test_controlled_triplet_audit_checks_model3_action_control(tmp_path) -> None
         "dataset_audit_sha256": "jepa-data",
         "bundle_order_sha256": "jepa-order",
         "steps": 7_667,
-        "training_config": {"model_id": "qwen", "max_steps": 7_667},
     }
     _write_json(
         directories["model3"] / "source_jepa_audit.json",
@@ -146,6 +145,11 @@ def test_controlled_triplet_audit_checks_model3_action_control(tmp_path) -> None
             "source": "no-action JEPA control",
             "training_action_assignment": "no_action",
             "uses_correct_action_information": False,
+            "training_config": {
+                "model_id": "qwen",
+                "max_steps": 7_667,
+                "action_separation_weight": 0.0,
+            },
         },
     )
     _write_json(
@@ -155,6 +159,11 @@ def test_controlled_triplet_audit_checks_model3_action_control(tmp_path) -> None
             "source": "action-conditioned JEPA",
             "training_action_assignment": "correct",
             "uses_correct_action_information": True,
+            "training_config": {
+                "model_id": "qwen",
+                "max_steps": 7_667,
+                "action_separation_weight": 0.25,
+            },
         },
     )
     result = audit_controlled_run_triplet(**{
@@ -162,6 +171,8 @@ def test_controlled_triplet_audit_checks_model3_action_control(tmp_path) -> None
     })
     assert result["passed"] is True
     assert result["checks"]["model3_has_no_correct_actions"] is True
+    assert result["checks"]["model3_disables_impossible_action_separation"] is True
+    assert result["checks"]["model4_uses_action_separation"] is True
 
     source3 = json.loads(
         (directories["model3"] / "source_jepa_audit.json").read_text(encoding="utf-8")

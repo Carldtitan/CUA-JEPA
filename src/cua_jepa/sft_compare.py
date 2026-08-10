@@ -131,7 +131,6 @@ def audit_controlled_run_triplet(
         "max_steps",
         "max_train_transitions",
         "max_validation_transitions",
-        "action_separation_weight",
         "action_separation_temperature",
         "changed_region_loss_weight",
         "global_loss_weight",
@@ -185,9 +184,15 @@ def audit_controlled_run_triplet(
             sources["model3"].get("training_action_assignment") == "no_action"
             and sources["model3"].get("uses_correct_action_information") is False
         ),
+        "model3_disables_impossible_action_separation": (
+            float(source3_config.get("action_separation_weight", -1.0)) == 0.0
+        ),
         "model4_has_correct_actions": (
             sources["model4"].get("training_action_assignment", "correct") == "correct"
             and sources["model4"].get("uses_correct_action_information") is True
+        ),
+        "model4_uses_action_separation": (
+            float(source4_config.get("action_separation_weight", 0.0)) > 0.0
         ),
         "model3_and_model4_same_jepa_dataset": (
             sources["model3"].get("dataset_audit_sha256")
