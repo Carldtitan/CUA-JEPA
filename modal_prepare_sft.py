@@ -96,6 +96,12 @@ def _curl_download(
             "--retry-delay",
             "2",
             "--retry-all-errors",
+            "--connect-timeout",
+            "30",
+            "--speed-limit",
+            "1048576",
+            "--speed-time",
+            "120",
             "--continue-at",
             "-",
             "--output",
@@ -115,7 +121,7 @@ def _parallel_download(
     files: list[tuple[str, str, int | None]], destination: Path
 ) -> list[str]:
     completed = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {
             executor.submit(_curl_download, name, url, destination, expected_size): name
             for name, url, expected_size in files
@@ -284,7 +290,7 @@ def _extract_selected(archive: Path, names: list[str], destination: Path) -> Non
     cpu=8,
     memory=16_384,
     ephemeral_disk=512 * 1024,
-    timeout=4 * 60 * 60,
+    timeout=8 * 60 * 60,
     volumes={"/sft": volume},
 )
 def ingest_agentnet_images() -> dict:
