@@ -1185,3 +1185,11 @@ The following work is not complete:
 - **Simple explanation:** The new download code could not start because its program was missing.
 - **Correction:** Install `curl` in the Modal image. Keep the download smoke test.
 - **Status:** Corrected before another image ingestion run. No data or GPU run was affected.
+
+### 134. The first SFT split check compared image names but not image bytes
+
+- **Technical term:** Content-hash split leakage.
+- **Mistake:** The planner rejected the same image file name in both splits. Two different file names could still contain the same screenshot.
+- **Simple explanation:** A copied screenshot could enter training and validation under two names.
+- **Correction:** Hash every stored screenshot after conversion. Reject any exact image hash shared by train and validation. Report duplicates within the full set.
+- **Status:** Added before SFT. The final image audit is waiting for the remaining archive download.

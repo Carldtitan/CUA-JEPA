@@ -379,6 +379,25 @@ def ingest_agentnet_images() -> dict:
     if missing:
         raise RuntimeError(f"Missing {len(missing)} stored images: {missing[:10]}")
 
+    image_sha_by_example = {
+        item["example_id"]: item["sha256"] for item in image_manifest
+    }
+    train_image_hashes = {
+        image_sha_by_example[record["example_id"]]
+        for record in records
+        if record["split"] == "train"
+    }
+    validation_image_hashes = {
+        image_sha_by_example[record["example_id"]]
+        for record in records
+        if record["split"] == "validation"
+    }
+    exact_image_overlap = train_image_hashes & validation_image_hashes
+    if exact_image_overlap:
+        raise RuntimeError(
+            f"Train and validation contain {len(exact_image_overlap)} exact screenshot hashes"
+        )
+
     dataset_path = root / "dataset.jsonl"
     temporary = dataset_path.with_suffix(".jsonl.tmp")
     with temporary.open("w", encoding="utf-8") as handle:
@@ -396,6 +415,9 @@ def ingest_agentnet_images() -> dict:
             "status": "ready",
             "stored_images": len(image_manifest),
             "stored_image_bytes": total_bytes,
+            "unique_stored_image_hashes": len(set(image_sha_by_example.values())),
+            "duplicate_stored_images": len(records) - len(set(image_sha_by_example.values())),
+            "exact_train_validation_image_hash_overlap": len(exact_image_overlap),
             "dataset_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
             "missing_images": 0,
         }
