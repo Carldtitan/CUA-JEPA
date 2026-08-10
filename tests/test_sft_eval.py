@@ -69,6 +69,43 @@ def test_summary_keeps_action_and_system_breakdowns() -> None:
     assert summary["mean_action_score"] == 0.5
     assert summary["macro_action_score"] == 0.5
     assert summary["coordinate"]["examples"] == 1
+    assert summary["coordinate"]["hit_rate_at_0_02"] == 0.0
+    assert summary["coordinate"]["hit_rate_at_0_05"] == 0.0
+    assert summary["coordinate"]["hit_rate_at_0_1"] == 0.0
     assert summary["non_coordinate"]["examples"] == 1
     assert set(summary["by_action"]) == {"click", "write"}
     assert set(summary["by_system"]) == {"Ubuntu", "Windows"}
+
+
+def test_summary_reports_strict_coordinate_thresholds() -> None:
+    summary = summarize_scores(
+        [
+            {
+                "target_action": "click",
+                "system": "Ubuntu",
+                "parsed": True,
+                "type_correct": True,
+                "score": 1.0,
+                "coordinate_distance": 0.015,
+            },
+            {
+                "target_action": "click",
+                "system": "Ubuntu",
+                "parsed": True,
+                "type_correct": True,
+                "score": 1.0,
+                "coordinate_distance": 0.07,
+            },
+            {
+                "target_action": "click",
+                "system": "Ubuntu",
+                "parsed": False,
+                "type_correct": False,
+                "score": 0.0,
+                "coordinate_distance": None,
+            },
+        ]
+    )
+    assert summary["coordinate"]["hit_rate_at_0_02"] == 1 / 3
+    assert summary["coordinate"]["hit_rate_at_0_05"] == 1 / 3
+    assert summary["coordinate"]["hit_rate_at_0_1"] == 2 / 3

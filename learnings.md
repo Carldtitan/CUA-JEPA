@@ -1209,3 +1209,11 @@ The following work is not complete:
 - **Simple explanation:** A score can change because the examples changed. This makes the learning result harder to interpret.
 - **Correction:** Test the same 250 validation examples before and after each full run. Keep smaller fixed sets only for smoke tests and pilots. Save the exact validation IDs and training order.
 - **Status:** Corrected before SFT. No training run used the mismatched full evaluation.
+
+### 137. The SFT evaluator had only one wide coordinate limit
+
+- **Technical term:** Coordinate-hit threshold sensitivity.
+- **Mistake:** The evaluator reported only a 0.10 normalized-distance limit for clicks and other coordinate actions.
+- **Simple explanation:** A prediction can pass even when it is far from a small button. One limit can hide poor pointer precision.
+- **Correction:** Keep the planned 0.10 main score. Also report strict hit rates at 0.02 and 0.05. Report the mean coordinate distance.
+- **Status:** Corrected before SFT. No SFT result used the incomplete metric set.

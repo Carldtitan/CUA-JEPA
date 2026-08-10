@@ -130,6 +130,17 @@ def summarize_scores(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         for value in coordinate_values
         if value.get("coordinate_distance") is not None
     ]
+    coordinate_hit_rates = {
+        f"hit_rate_at_{str(threshold).replace('.', '_')}": sum(
+            float(value.get("coordinate_distance") is not None)
+            * float(float(value.get("coordinate_distance") or 0.0) <= threshold)
+            for value in coordinate_values
+        )
+        / len(coordinate_values)
+        if coordinate_values
+        else 0.0
+        for threshold in (0.02, 0.05, 0.1)
+    }
     non_coordinate_values = [
         value for value in values if str(value["target_action"]) not in COORDINATE_ACTIONS
     ]
@@ -147,6 +158,7 @@ def summarize_scores(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "coordinate": {
             "examples": len(coordinate_values),
             "hit_rate": mean("score", coordinate_values) if coordinate_values else 0.0,
+            **coordinate_hit_rates,
             "mean_distance_when_action_type_correct": (
                 sum(measured_distances) / len(measured_distances) if measured_distances else None
             ),
