@@ -121,6 +121,12 @@ def plan_agentnet_sft(train_count: int = 2_000, validation_count: int = 250) -> 
             "selection_sha256": plan_sha256,
             "candidate_examples": len(candidates),
             "candidate_examples_by_source": source_counts,
+            "candidate_examples_by_system": dict(
+                sorted(Counter(item.system for item in candidates).items())
+            ),
+            "candidate_examples_by_action": dict(
+                sorted(Counter(item.action_kind for item in candidates).items())
+            ),
             "selected_by_source": dict(Counter(item.source_file for item in train + validation)),
             "status": "planned",
         }

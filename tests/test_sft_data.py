@@ -102,3 +102,4 @@ def test_split_is_exact_deterministic_and_task_disjoint() -> None:
     assert audit["task_overlap"] == 0
     assert audit["screenshot_overlap"] == 0
     assert set(audit["train_by_system"]) == set(systems)
+    assert max(audit["train_by_system"].values()) - min(audit["train_by_system"].values()) <= 1

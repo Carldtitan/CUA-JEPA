@@ -205,37 +205,76 @@ def candidate_examples(
 def _balanced_take(
     examples: Iterable[SFTExample], count: int, split: str, seed: int, max_per_task: int = 3
 ) -> list[SFTExample]:
-    buckets: dict[tuple[str, str, str], list[SFTExample]] = defaultdict(list)
-    for example in examples:
-        buckets[(example.system, example.domain, example.action_kind)].append(example)
-    for bucket in buckets.values():
-        bucket.sort(key=lambda item: _stable_number(item.example_id, seed))
-
+    """Balance systems and domains without making rare actions unnaturally common."""
+    by_system: dict[str, list[SFTExample]] = defaultdict(list)
+    for value in examples:
+        by_system[value.system].append(value)
+    systems = sorted(by_system)
+    if not systems:
+        raise RuntimeError(f"No {split} examples are available")
+    base_quota, remainder = divmod(count, len(systems))
+    system_quotas = {
+        system: base_quota + (index < remainder) for index, system in enumerate(systems)
+    }
     selected: list[SFTExample] = []
     task_counts: dict[str, int] = defaultdict(int)
-    active = sorted(buckets, key=lambda key: (_stable_number("|".join(key), seed), key))
-    positions = {key: 0 for key in active}
-    while active and len(selected) < count:
-        next_active: list[tuple[str, str, str]] = []
-        for key in active:
-            bucket = buckets[key]
-            position = positions[key]
-            while position < len(bucket) and task_counts[bucket[position].task_id] >= max_per_task:
-                position += 1
-            positions[key] = position
-            if position >= len(bucket):
-                continue
-            example = bucket[position]
-            positions[key] += 1
-            task_counts[example.task_id] += 1
-            selected.append(
-                SFTExample(**{**example.to_dict(), "split": split, "applications": example.applications, "history": example.history})
+    selected_ids: set[str] = set()
+
+    def add(example: SFTExample) -> bool:
+        if example.example_id in selected_ids or task_counts[example.task_id] >= max_per_task:
+            return False
+        selected_ids.add(example.example_id)
+        task_counts[example.task_id] += 1
+        selected.append(
+            SFTExample(
+                **{
+                    **example.to_dict(),
+                    "split": split,
+                    "applications": example.applications,
+                    "history": example.history,
+                }
             )
-            if positions[key] < len(bucket):
-                next_active.append(key)
-            if len(selected) == count:
+        )
+        return True
+
+    for system in systems:
+        quota = system_quotas[system]
+        system_values = sorted(
+            by_system[system], key=lambda item: _stable_number(item.example_id, seed)
+        )
+        system_start = len(selected)
+
+        # Give every available domain one place before the natural fill.
+        domains: dict[str, list[SFTExample]] = defaultdict(list)
+        for value in system_values:
+            domains[value.domain].append(value)
+        for domain in sorted(domains, key=lambda key: (_stable_number(key, seed), key)):
+            for value in domains[domain]:
+                if add(value):
+                    break
+            if len(selected) - system_start >= quota:
                 break
-        active = next_active
+
+        # Give each action type a small minimum. Do not make all types equal.
+        minimum_per_action = max(2, quota // 100)
+        action_counts: dict[str, int] = defaultdict(int)
+        for value in selected[system_start:]:
+            action_counts[value.action_kind] += 1
+        by_action: dict[str, list[SFTExample]] = defaultdict(list)
+        for value in system_values:
+            by_action[value.action_kind].append(value)
+        for action in sorted(by_action):
+            for value in by_action[action]:
+                if action_counts[action] >= minimum_per_action:
+                    break
+                if add(value):
+                    action_counts[action] += 1
+
+        for value in system_values:
+            if len(selected) - system_start >= quota:
+                break
+            add(value)
+
     if len(selected) != count:
         raise RuntimeError(f"Requested {count} {split} examples, but selected {len(selected)}")
     return selected

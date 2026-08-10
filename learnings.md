@@ -1145,3 +1145,11 @@ The following work is not complete:
 - **Simple explanation:** The parser tried to read a field from an empty value and stopped.
 - **Correction:** Treat `null` as missing feedback. Keep the other task and step quality checks.
 - **Status:** Corrected before image ingestion or SFT.
+
+### 129. The first SFT selector made rare actions too common
+
+- **Technical term:** Stratified-sampling distribution shift.
+- **Mistake:** The selector gave equal weight to every operating-system, domain, and action combination. It selected 325 double clicks and only 347 normal clicks.
+- **Simple explanation:** The set was diverse, but it no longer looked like normal computer use. This could teach the model to predict rare actions too often.
+- **Correction:** Balance the three operating systems. Give each domain and action type a small minimum. Fill the remaining places from the natural source order.
+- **Status:** Corrected before image ingestion or SFT. A new plan audit is required.
