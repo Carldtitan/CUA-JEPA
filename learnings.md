@@ -1297,3 +1297,11 @@ The following work is not complete:
 - **Simple explanation:** The user asked what changed in the model. The answer mainly described data transfer.
 - **Correction:** Separate every future status report into model architecture, training result, data work, and active compute. State clearly whether a test changed Qwen or only a separate predictor.
 - **Status:** Corrected in the next architecture summary. No model, data, or active Modal job was changed.
+
+### 148. The move to SFT did not explain the transfer decision
+
+- **Technical term:** Representation-to-policy transfer gap.
+- **Mistake:** We started preparing supervised SFT data without first stating that the strongest V-JEPA 2 predictor was separate from the Qwen action policy.
+- **Simple explanation:** The JEPA predictor learned screen changes. Qwen still needs a defined way to use that knowledge when it chooses an action.
+- **Correction:** Treat SFT and JEPA-to-Qwen transfer as separate design decisions. State which JEPA component enters the policy before training. Compare the low-cost Qwen-LoRA transfer path with an explicit V-JEPA 2 policy connection.
+- **Status:** Open architecture decision. AgentNet ingestion continues because the same supervised subset can test either transfer path.
