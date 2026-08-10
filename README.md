@@ -108,7 +108,9 @@ The scaled run uses 8,000 balanced training transitions. It evaluates 500 transi
 | Scaled action separation, seed 20260812 | 38.8% | 18.8 points | 32.7% | 38.9% |
 | Scaled action separation mean | 39.6% | 19.2 points | 34.1% | 38.5% |
 | Two fixed high-detail views | 36.0% | 13.6 points | 35.2% | 33.2% |
-| Two separate high-detail views | 37.8% | 16.6 points | 37.1% | 36.3% |
+| Two separate high-detail views, seed 20260811 | 37.8% | 16.6 points | 37.1% | 36.3% |
+| Two separate high-detail views, seed 20260812 | 39.6% | 18.8 points | 33.8% | 41.6% |
+| Two separate high-detail views mean | 38.7% | 17.7 points | 35.5% | 38.9% |
 
 Chance accuracy is 25%. The 95% bundle intervals are 37.2% to 43.6% and 35.8% to 42.0% for the two scaled runs.
 

@@ -899,7 +899,15 @@ The local source metrics are:
 - **Mistake:** Each predictor test ran the unchanged frozen V-JEPA 2 encoder on the same screens again.
 - **Simple explanation:** We paid for the same fixed calculation more than once.
 - **Correction:** Save frozen visual features with a data and encoder hash. Validate tensor counts and shapes before reuse.
-- **Status:** Corrected in code. Local cache tests pass. The first Modal cache build and reuse test are not yet complete.
+- **Status:** Corrected in code. The cache passed local checks and was saved in Modal. A reuse run is not yet complete.
+
+### 105. One seed made the separate-view method look better than it was
+
+- **Technical term:** Random-seed variance.
+- **Mistake:** Seed 20260811 reached 37.1% click accuracy. This was close enough to the 38% gate to look promising by itself.
+- **Simple explanation:** A different random start changed which action types worked best.
+- **Correction:** Run the same method with seed 20260812. Report the two-run mean and each action group.
+- **Status:** Corrected. The second seed reached 33.8% on clicks. The mean click score is 35.5%. The old method remains best overall.
 
 ## Current corrections in the training code
 

@@ -373,6 +373,7 @@ def run_vjepa2_gui_pilot(
         "tiled_separation",
         "independent_tiled_smoke",
         "independent_tiled_separation",
+        "independent_tiled_wide_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -425,12 +426,19 @@ def run_vjepa2_gui_pilot(
             config.screen_views = "two_tiles"
             config.predictor_architecture = "independent_tiled_adaln_spatial"
             config.encoder_bundle_batch_size = 4
+        elif mode == "independent_tiled_wide_separation":
+            config.screen_views = "two_tiles"
+            config.predictor_architecture = "independent_tiled_adaln_spatial"
+            config.predictor_dim = 512
+            config.predictor_layers = 8
+            config.encoder_bundle_batch_size = 4
 
     if mode in {
         "scaled_separation",
         "scaled_action_token",
         "tiled_separation",
         "independent_tiled_separation",
+        "independent_tiled_wide_separation",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -521,6 +529,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_tiled_separation",
         "vjepa2_gui_independent_tiled_smoke",
         "vjepa2_gui_independent_tiled_separation",
+        "vjepa2_gui_independent_tiled_wide_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(
