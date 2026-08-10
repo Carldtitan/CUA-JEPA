@@ -669,6 +669,22 @@ The local source metrics are:
 - **Correction:** Validate all remote artifacts inside the Modal function before the function returns success.
 - **Status:** Fixed and confirmed by the final smoke run.
 
+### 76. The collapse stop rule can miss an almost constant predictor
+
+- **Technical term:** False-negative collapse detection.
+- **Mistake:** The stop rule requires three collapse signals to fail at the same time. Action accuracy stayed near chance, but two small secondary values remained just above their limits.
+- **Simple explanation:** The model can ignore actions without activating the automatic stop rule.
+- **Correction:** Treat near-chance action accuracy and very low predicted variance as direct failure signals. Test the new rule on saved pilot and full-run records before another run.
+- **Status:** Found during the active full run. The live run is unchanged. The correction is pending.
+
+### 77. Ending the chat reply looked like stopping the training run
+
+- **Technical term:** Local-client and remote-job state ambiguity.
+- **Mistake:** I ended the reply without clearly separating the chat state from the Modal job state.
+- **Simple explanation:** The reply stopped, but the GPU job continued. This made it look as if training stopped.
+- **Correction:** Always state the Modal app state, task count, and current step before ending a reply during a remote run.
+- **Status:** Communication correction applied. The active run was verified at step 1,250.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
@@ -720,5 +736,5 @@ The following work is not complete:
 7. Improve or rebalance scroll transitions.
 8. Test on real, unseen software.
 9. Measure observability overhead in a longer timing pilot.
-10. Get new user approval for the exact full-run settings.
-11. Run full Model 4 only after these checks pass.
+10. Complete and analyze the approved full Model 4 run.
+11. Replace the weak collapse stop rule before a later full run.
