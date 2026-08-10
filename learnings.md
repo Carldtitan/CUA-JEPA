@@ -1265,3 +1265,11 @@ The following work is not complete:
 - **Simple explanation:** The pilot would test only macOS. It could miss failures on Ubuntu and Windows.
 - **Correction:** Select small validation sets deterministically and balance them across Darwin, Ubuntu, and Windows. Use all 250 records for the full before-and-after result.
 - **Status:** Corrected before SFT. No pilot used the biased subset.
+
+### 144. The SFT output limit could truncate long typing actions
+
+- **Technical term:** Generation token limit.
+- **Mistake:** Evaluation allowed only 64 new tokens. The longest selected typing target contains 209 characters and 83 Qwen tokens.
+- **Simple explanation:** The model could start the correct action but be stopped before it finished. The evaluator would then mark it wrong.
+- **Correction:** Allow 128 new tokens. A tokenizer audit found zero targets above this limit. Short click actions still stop when their end token appears.
+- **Status:** Corrected before SFT. No SFT evaluation used the shorter limit.

@@ -47,7 +47,7 @@ class SFTTrainConfig:
     monitor_examples: int = 32
     initial_evaluation_examples: int = 250
     final_evaluation_examples: int = 250
-    max_new_tokens: int = 64
+    max_new_tokens: int = 128
     coordinate_threshold: float = 0.1
     max_runtime_seconds: int = 4 * 60 * 60
     approved_cost_limit_usd: float = 20.0
