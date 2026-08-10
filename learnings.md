@@ -1105,3 +1105,11 @@ The following work is not complete:
 - **Simple explanation:** That run changed only the JEPA predictor. It did not change Qwen. Qwen gets no benefit if we remove the predictor before SFT.
 - **Correction:** Test the saved Qwen vision LoRA adapter first. Keep that adapter attached during the same SFT used for Model 2 and Model 4. A different option is to keep V-JEPA in the policy, but that would change the model architecture and inference cost.
 - **Status:** Open. The saved Qwen vision LoRA adapter was found and checked. The common SFT and downstream action test are not implemented yet.
+
+### 124. The first SFT action parser rejected valid hotkeys
+
+- **Technical term:** Parser state consumption.
+- **Mistake:** The parser copied hotkey arguments into the normalized action but left the same arguments in its unprocessed list.
+- **Simple explanation:** A valid action such as Ctrl+S was read correctly and then rejected by mistake.
+- **Correction:** Clear the processed hotkey arguments. Keep a unit test for a two-key hotkey.
+- **Status:** Corrected before data ingestion. No generated data or GPU run was affected.
