@@ -20,7 +20,10 @@ from cua_jepa.sft_eval import parse_action_prediction, score_action, summarize_s
 
 SYSTEM_PROMPT = (
     "You are a computer-use agent. Read the instruction, recent actions, and screenshot. "
-    "Return only one JSON action. Use normalized x and y coordinates from 0 to 1."
+    "Return only one JSON action. Use normalized x and y coordinates from 0 to 1. "
+    "Valid actions are click, double_click, right_click, moveTo, dragTo, scroll, write, "
+    "press, and hotkey. Coordinate actions use x and y. Scroll uses amount. Write uses "
+    "text. Press and hotkey use a keys list."
 )
 
 

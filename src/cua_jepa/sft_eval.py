@@ -114,21 +114,50 @@ def summarize_scores(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     for value in values:
         by_action[str(value["target_action"])].append(value)
         by_system[str(value.get("system", "unknown"))].append(value)
+    action_summaries = {
+        action: {
+            "examples": len(items),
+            "action_type_accuracy": mean("type_correct", items),
+            "mean_action_score": mean("score", items),
+        }
+        for action, items in sorted(by_action.items())
+    }
+    coordinate_values = [
+        value for value in values if str(value["target_action"]) in COORDINATE_ACTIONS
+    ]
+    measured_distances = [
+        float(value["coordinate_distance"])
+        for value in coordinate_values
+        if value.get("coordinate_distance") is not None
+    ]
+    non_coordinate_values = [
+        value for value in values if str(value["target_action"]) not in COORDINATE_ACTIONS
+    ]
     return {
         "examples": len(values),
         "parse_rate": mean("parsed", values),
         "action_type_accuracy": mean("type_correct", values),
         "mean_action_score": mean("score", values),
+        "macro_action_score": sum(
+            value["mean_action_score"] for value in action_summaries.values()
+        )
+        / len(action_summaries),
         "exact_success_rate": sum(float(value.get("score", 0.0)) == 1.0 for value in values)
         / len(values),
-        "by_action": {
-            action: {
-                "examples": len(items),
-                "action_type_accuracy": mean("type_correct", items),
-                "mean_action_score": mean("score", items),
-            }
-            for action, items in sorted(by_action.items())
+        "coordinate": {
+            "examples": len(coordinate_values),
+            "hit_rate": mean("score", coordinate_values) if coordinate_values else 0.0,
+            "mean_distance_when_action_type_correct": (
+                sum(measured_distances) / len(measured_distances) if measured_distances else None
+            ),
         },
+        "non_coordinate": {
+            "examples": len(non_coordinate_values),
+            "mean_action_score": (
+                mean("score", non_coordinate_values) if non_coordinate_values else 0.0
+            ),
+        },
+        "by_action": action_summaries,
         "by_system": {
             system: {
                 "examples": len(items),

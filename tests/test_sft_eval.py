@@ -67,5 +67,8 @@ def test_summary_keeps_action_and_system_breakdowns() -> None:
     )
     assert summary["examples"] == 2
     assert summary["mean_action_score"] == 0.5
+    assert summary["macro_action_score"] == 0.5
+    assert summary["coordinate"]["examples"] == 1
+    assert summary["non_coordinate"]["examples"] == 1
     assert set(summary["by_action"]) == {"click", "write"}
     assert set(summary["by_system"]) == {"Ubuntu", "Windows"}
