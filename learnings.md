@@ -685,6 +685,14 @@ The local source metrics are:
 - **Correction:** Always state the Modal app state, task count, and current step before ending a reply during a remote run.
 - **Status:** Communication correction applied. The active run was verified at step 1,250.
 
+### 78. A near-chance checkpoint did not prove that the complete run had failed
+
+- **Technical term:** Premature convergence judgment.
+- **Mistake:** I called the active run a failure from the step-1,500 validation result.
+- **Simple explanation:** The action loss started to improve after step 1,750. One early checkpoint did not show the later change.
+- **Correction:** Separate the current result from the final result. Check the next fixed validation result before declaring failure.
+- **Status:** Found during the active full run. The step-2,000 validation result is pending.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
