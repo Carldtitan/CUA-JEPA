@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import math
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping
@@ -154,6 +155,8 @@ def candidate_examples(
         meta = metadata.get(task_id, {})
         if not task_id or not trajectory.get("task_completed"):
             continue
+        if str(meta.get("domains", "")).lower() == "infeasible":
+            continue
         if float(trajectory.get("alignment_score", 0) or 0) < 6:
             continue
         verify_feedback = meta.get("verify_feedback") or {}
@@ -203,7 +206,12 @@ def candidate_examples(
 
 
 def _balanced_take(
-    examples: Iterable[SFTExample], count: int, split: str, seed: int, max_per_task: int = 3
+    examples: Iterable[SFTExample],
+    count: int,
+    split: str,
+    seed: int,
+    max_per_task: int = 3,
+    max_action_share: Mapping[str, float] | None = None,
 ) -> list[SFTExample]:
     """Balance systems and domains without making rare actions unnaturally common."""
     by_system: dict[str, list[SFTExample]] = defaultdict(list)
@@ -219,12 +227,14 @@ def _balanced_take(
     selected: list[SFTExample] = []
     task_counts: dict[str, int] = defaultdict(int)
     selected_ids: set[str] = set()
+    system_action_counts: dict[tuple[str, str], int] = defaultdict(int)
 
     def add(example: SFTExample) -> bool:
         if example.example_id in selected_ids or task_counts[example.task_id] >= max_per_task:
             return False
         selected_ids.add(example.example_id)
         task_counts[example.task_id] += 1
+        system_action_counts[(example.system, example.action_kind)] += 1
         selected.append(
             SFTExample(
                 **{
@@ -270,7 +280,21 @@ def _balanced_take(
                 if add(value):
                     action_counts[action] += 1
 
+        deferred: list[SFTExample] = []
         for value in system_values:
+            if len(selected) - system_start >= quota:
+                break
+            share = (max_action_share or {}).get(value.action_kind)
+            action_limit = math.ceil(quota * share) if share is not None else None
+            if (
+                action_limit is not None
+                and system_action_counts[(system, value.action_kind)] >= action_limit
+            ):
+                deferred.append(value)
+                continue
+            add(value)
+        # Use capped actions only if the source does not contain enough alternatives.
+        for value in deferred:
             if len(selected) - system_start >= quota:
                 break
             add(value)
@@ -296,7 +320,13 @@ def split_examples(
     validation_pool = [value for value in values if value.task_id in validation_tasks]
     train_pool = [value for value in values if value.task_id not in validation_tasks]
     validation = _balanced_take(validation_pool, validation_count, "validation", seed + 1)
-    train = _balanced_take(train_pool, train_count, "train", seed + 2)
+    train = _balanced_take(
+        train_pool,
+        train_count,
+        "train",
+        seed + 2,
+        max_action_share={"click": 0.65},
+    )
     if {value.task_id for value in train} & {value.task_id for value in validation}:
         raise RuntimeError("SFT train and validation task IDs overlap")
     if {value.image_file for value in train} & {value.image_file for value in validation}:

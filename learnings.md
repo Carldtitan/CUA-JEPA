@@ -1153,3 +1153,11 @@ The following work is not complete:
 - **Simple explanation:** The set was diverse, but it no longer looked like normal computer use. This could teach the model to predict rare actions too often.
 - **Correction:** Balance the three operating systems. Give each domain and action type a small minimum. Fill the remaining places from the natural source order.
 - **Status:** Corrected before image ingestion or SFT. A new plan audit is required.
+
+### 130. A fully source-like small SFT set contained too few rare actions
+
+- **Technical term:** Class imbalance.
+- **Mistake:** The corrected source-like set gave 1,631 of 2,000 training places to normal clicks. It contained only six scroll actions.
+- **Simple explanation:** The set looked natural, but it gave the model too few examples of some actions to learn them well.
+- **Correction:** Keep validation source-like. Cap normal clicks at 65% in training. Use the exact same capped training set for Model 2 and Model 4.
+- **Status:** Corrected before image ingestion or SFT. A final plan audit is required.

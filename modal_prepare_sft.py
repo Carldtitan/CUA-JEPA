@@ -119,6 +119,13 @@ def plan_agentnet_sft(train_count: int = 2_000, validation_count: int = 250) -> 
             "created_at_utc": started,
             "agentnet_revision": AGENTNET_REVISION,
             "selection_sha256": plan_sha256,
+            "sampling_policy": {
+                "train_system_balance": "equal",
+                "train_click_share_cap": 0.65,
+                "validation_system_balance": "equal",
+                "validation_action_mix": "source-like",
+                "max_examples_per_task": 3,
+            },
             "candidate_examples": len(candidates),
             "candidate_examples_by_source": source_counts,
             "candidate_examples_by_system": dict(

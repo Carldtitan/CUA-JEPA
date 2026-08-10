@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import pytest
 
 from cua_jepa.sft_data import (
+    _balanced_take,
     candidate_examples,
     canonical_action,
     dataset_audit,
@@ -82,6 +85,37 @@ def test_accepts_official_quality_labels_and_null_feedback() -> None:
         "source.jsonl",
     )
     assert len(candidates) == 8
+
+
+def test_excludes_tasks_marked_infeasible() -> None:
+    trajectory, metadata = _trajectory("bad-task", "Windows")
+    metadata["domains"] = "infeasible"
+    assert candidate_examples([trajectory], {"bad-task": metadata}, "source.jsonl") == []
+
+
+def test_training_click_cap_uses_available_other_actions() -> None:
+    trajectories = []
+    metadata = {}
+    for index in range(40):
+        trajectory, meta = _trajectory(f"mix-{index}", "Windows")
+        trajectories.append(trajectory)
+        metadata[meta["task_id"]] = meta
+    candidates = candidate_examples(trajectories, metadata, "source.jsonl")
+    mixed = [
+        replace(
+            value,
+            action_kind="write",
+            action={"action": "write", "text": "demo"},
+            target='{"action":"write","text":"demo"}',
+        )
+        if index % 5 == 0
+        else value
+        for index, value in enumerate(candidates)
+    ]
+    selected = _balanced_take(
+        mixed, 60, "train", seed=9, max_action_share={"click": 0.65}
+    )
+    assert sum(value.action_kind == "click" for value in selected) <= 39
 
 
 def test_split_is_exact_deterministic_and_task_disjoint() -> None:
