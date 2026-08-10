@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,7 @@ hf_cache_volume = modal.Volume.from_name(HF_CACHE_VOLUME_NAME, create_if_missing
     timeout=30 * 60,
     scaledown_window=60,
     volumes={
+        "/sft": sft_volume,
         "/training": training_volume,
         "/root/.cache/huggingface": hf_cache_volume,
     },
@@ -70,6 +72,7 @@ def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) 
         _configure_model,
         _gradient_norm,
         _parameter_groups,
+        make_generation_inputs,
         make_training_inputs,
     )
 
@@ -78,19 +81,36 @@ def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) 
     processor, model, source_sha256 = _configure_model(config, variant, jepa_path)
     model.to("cuda").train()
     vision_parameters, language_parameters = _parameter_groups(model)
-    image_path = Path("/tmp/sft-setup.webp")
-    Image.new("RGB", (1920, 1080), "white").save(image_path)
-    record = {
-        "instruction": "Click the center of the screen.",
-        "history": [],
-        "target": '{"action":"click","x":0.5,"y":0.5}',
-    }
+    selection_path = Path(DATASET_ROOT) / "selection.jsonl"
+    record = None
+    image_path = None
+    if selection_path.is_file():
+        for line in selection_path.read_text(encoding="utf-8").splitlines():
+            candidate = json.loads(line)
+            stored_name = hashlib.sha256(candidate["example_id"].encode()).hexdigest()[:24]
+            candidate_path = Path(DATASET_ROOT) / "images" / f"{stored_name}.webp"
+            if candidate_path.is_file():
+                record = candidate
+                image_path = candidate_path
+                break
+    used_real_example = record is not None
+    if record is None or image_path is None:
+        image_path = Path("/tmp/sft-setup.webp")
+        Image.new("RGB", (1920, 1080), "white").save(image_path)
+        record = {
+            "example_id": "synthetic-setup",
+            "instruction": "Click the center of the screen.",
+            "history": [],
+            "target": '{"action":"click","x":0.5,"y":0.5}',
+        }
     inputs = make_training_inputs(processor, record, image_path, torch.device("cuda"))
     output = model(**inputs)
     output.loss.backward()
-    return {
+    result = {
         "variant": variant,
         "max_pixels": max_pixels,
+        "used_real_example": used_real_example,
+        "example_id": record["example_id"],
         "loss": float(output.loss.detach().item()),
         "vision_lora_parameters": sum(value.numel() for value in vision_parameters),
         "language_lora_parameters": sum(value.numel() for value in language_parameters),
@@ -101,6 +121,29 @@ def check_sft_model_setup(variant: str = "model4", max_pixels: int = 1_048_576) 
         "pixel_values_shape": list(inputs["pixel_values"].shape),
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
     }
+    model.zero_grad(set_to_none=True)
+    del output, inputs
+    model.eval()
+    generation_inputs = make_generation_inputs(
+        processor, record, image_path, torch.device("cuda")
+    )
+    input_length = generation_inputs["input_ids"].shape[1]
+    with torch.no_grad():
+        generated = model.generate(
+            **generation_inputs,
+            max_new_tokens=32,
+            do_sample=False,
+            use_cache=True,
+        )
+    result["generated_text"] = processor.batch_decode(
+        generated[:, input_length:],
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )[0]
+    result["peak_cuda_memory_gib_after_generation"] = (
+        torch.cuda.max_memory_allocated() / 2**30
+    )
+    return result
 
 
 @app.function(
