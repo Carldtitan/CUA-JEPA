@@ -19,6 +19,14 @@ dev = [
   "pytest>=8,<10",
   "ruff>=0.9,<1",
 ]
+train = [
+  "accelerate>=1.13,<2",
+  "numpy>=2,<3",
+  "peft>=0.19,<1",
+  "safetensors>=0.5,<1",
+  "torch>=2.8,<3",
+  "transformers>=4.57,<5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

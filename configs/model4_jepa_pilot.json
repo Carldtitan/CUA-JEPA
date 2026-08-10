@@ -1,0 +1,21 @@
+{
+  "model_id": "Qwen/Qwen3-VL-2B-Instruct",
+  "seed": 20260809,
+  "max_pixels": 262144,
+  "min_pixels": 65536,
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "predictor_dim": 384,
+  "predictor_layers": 2,
+  "predictor_heads": 8,
+  "learning_rate": 0.0002,
+  "weight_decay": 0.01,
+  "ema_decay": 0.996,
+  "changed_patch_weight": 4.0,
+  "gradient_accumulation_steps": 1,
+  "max_steps": 100,
+  "max_train_transitions": 100,
+  "max_validation_transitions": 100,
+  "evaluation_bundles": 8,
+  "log_every": 5
+}

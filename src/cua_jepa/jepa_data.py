@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import io
+import json
+import tarfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterable
+
+from PIL import Image
+
+
+@dataclass(frozen=True)
+class TransitionSample:
+    bundle_id: str
+    app: str
+    split: str
+    branch_index: int
+    action: dict[str, Any]
+    current_webp: bytes
+    future_webp: bytes
+    changed_pixel_fraction: float
+
+    def current_image(self) -> Image.Image:
+        return _decode_webp(self.current_webp)
+
+    def future_image(self) -> Image.Image:
+        return _decode_webp(self.future_webp)
+
+
+def _decode_webp(value: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(value)) as image:
+        return image.convert("RGB")
+
+
+def _read_member(archive: tarfile.TarFile, name: str) -> bytes:
+    member = archive.getmember(name)
+    handle = archive.extractfile(member)
+    if handle is None:
+        raise ValueError(f"Tar member is not a regular file: {name}")
+    return handle.read()
+
+
+def load_transition_tar(path: str | Path, limit: int | None = None) -> list[TransitionSample]:
+    """Load independent same-state branch transitions from one audited dataset tar."""
+
+    tar_path = Path(path)
+    samples: list[TransitionSample] = []
+    with tarfile.open(tar_path, mode="r") as archive:
+        bundle_members = sorted(
+            (member for member in archive.getmembers() if member.name.endswith("/bundle.json")),
+            key=lambda member: member.name,
+        )
+        for bundle_member in bundle_members:
+            bundle_handle = archive.extractfile(bundle_member)
+            if bundle_handle is None:
+                raise ValueError(f"Unable to read {bundle_member.name} from {tar_path}")
+            bundle = json.load(bundle_handle)
+            root = str(PurePosixPath(bundle_member.name).parent)
+            current = _read_member(archive, f"{root}/{bundle['current_file']}")
+            for branch in bundle["branches"]:
+                samples.append(
+                    TransitionSample(
+                        bundle_id=str(bundle["bundle_id"]),
+                        app=str(bundle["app"]),
+                        split=str(bundle["split"]),
+                        branch_index=int(branch["branch_index"]),
+                        action=dict(branch["action"]),
+                        current_webp=current,
+                        future_webp=_read_member(archive, f"{root}/{branch['after_file']}"),
+                        changed_pixel_fraction=float(branch["changed_pixel_fraction"]),
+                    )
+                )
+                if limit is not None and len(samples) >= limit:
+                    return samples
+    return samples
+
+
+def load_transition_tars(
+    paths: Iterable[str | Path], limit: int | None = None
+) -> list[TransitionSample]:
+    samples: list[TransitionSample] = []
+    for path in paths:
+        remaining = None if limit is None else limit - len(samples)
+        if remaining is not None and remaining <= 0:
+            break
+        samples.extend(load_transition_tar(path, limit=remaining))
+    return samples
+
+
+def group_by_bundle(samples: Iterable[TransitionSample]) -> dict[str, list[TransitionSample]]:
+    groups: dict[str, list[TransitionSample]] = {}
+    for sample in samples:
+        groups.setdefault(sample.bundle_id, []).append(sample)
+    for branches in groups.values():
+        branches.sort(key=lambda sample: sample.branch_index)
+    return groups
