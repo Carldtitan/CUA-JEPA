@@ -8,6 +8,7 @@ from cua_jepa.train_sft import (
     find_last_subsequence,
     runtime_audit,
     select_evaluation_records,
+    source_jepa_audit,
     trainable_state_sha256,
 )
 
@@ -77,3 +78,21 @@ def test_runtime_audit_hashes_training_and_evaluation_code() -> None:
     assert audit["torch"]
     assert len(audit["training_code_sha256"]) == 64
     assert len(audit["evaluation_code_sha256"]) == 64
+
+
+def test_source_jepa_audit_records_non_pure_objective(tmp_path) -> None:
+    adapter = tmp_path / "run" / "qwen_vision_online_lora" / "online"
+    adapter.mkdir(parents=True)
+    (adapter / "adapter_model.safetensors").write_bytes(b"adapter")
+    (tmp_path / "run" / "final_metrics.json").write_text(
+        '{"config":{"action_separation_weight":0.25,'
+        '"variance_regularization_weight":0.05,'
+        '"covariance_regularization_weight":0.05},'
+        '"steps":10,"stop_reason":"done",'
+        '"final_validation":{"four_way_accuracy":0.38}}',
+        encoding="utf-8",
+    )
+    audit = source_jepa_audit(adapter)
+    assert audit["uses_action_separation"] is True
+    assert audit["objective"].startswith("latent regression plus")
+    assert source_jepa_audit(None) == {"source": None}

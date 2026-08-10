@@ -108,6 +108,41 @@ def runtime_audit() -> dict[str, Any]:
     }
 
 
+def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
+    if jepa_adapter_path is None:
+        return {"source": None}
+    run_root = jepa_adapter_path.parent.parent
+    final_metrics_path = run_root / "final_metrics.json"
+    if not final_metrics_path.is_file():
+        raise RuntimeError(f"The source JEPA metrics are missing: {final_metrics_path}")
+    metrics = json.loads(final_metrics_path.read_text(encoding="utf-8"))
+    config = metrics["config"]
+    return {
+        "source": "action-conditioned JEPA",
+        "objective": "latent regression plus action separation and anti-collapse regularization",
+        "source_run_directory": run_root.name,
+        "final_metrics_sha256": sha256_file(final_metrics_path),
+        "adapter_model_sha256": sha256_file(
+            jepa_adapter_path / "adapter_model.safetensors"
+        ),
+        "steps": metrics.get("steps"),
+        "stop_reason": metrics.get("stop_reason"),
+        "final_validation_four_way_accuracy": metrics.get("final_validation", {}).get(
+            "four_way_accuracy"
+        ),
+        "training_config": config,
+        "uses_action_separation": float(config.get("action_separation_weight", 0.0)) > 0.0,
+        "uses_variance_regularization": float(
+            config.get("variance_regularization_weight", 0.0)
+        )
+        > 0.0,
+        "uses_covariance_regularization": float(
+            config.get("covariance_regularization_weight", 0.0)
+        )
+        > 0.0,
+    }
+
+
 def tensor_state_sha256(parameters: Iterable[tuple[str, torch.Tensor]]) -> str:
     digest = hashlib.sha256()
     for name, value in sorted(parameters):
@@ -470,6 +505,7 @@ def train_policy_sft(
         raise RuntimeError("A non-LoRA base parameter is trainable")
     write_json(output_path / "config.json", asdict(config))
     write_json(output_path / "runtime_audit.json", runtime_audit())
+    write_json(output_path / "source_jepa_audit.json", source_jepa_audit(jepa_path))
     write_json(output_path / "dataset_audit.json", dataset_audit)
     write_json(output_path / "initialization_audit.json", initialization)
     write_json(

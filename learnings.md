@@ -1281,3 +1281,11 @@ The following work is not complete:
 - **Simple explanation:** A later run could differ because its code or software changed, but the result would not show that change.
 - **Correction:** Save a runtime audit with both source hashes and the main software and GPU versions.
 - **Status:** Corrected before SFT. No SFT result was created without this audit.
+
+### 146. The SFT output could hide the Model 4 source objective
+
+- **Technical term:** Pretraining-objective provenance.
+- **Mistake:** The first SFT manifest saved the JEPA adapter hash but not the objective that created the adapter.
+- **Simple explanation:** We could later describe Model 4 as pure JEPA regression. That would be false. The saved adapter used latent regression, action separation, and anti-collapse regularization.
+- **Correction:** Copy the complete source training config, source metrics hash, adapter hash, and objective label into each Model 4 SFT result.
+- **Status:** Corrected before SFT. The downstream test will use the successful action-conditioned JEPA adapter and will label it accurately.
