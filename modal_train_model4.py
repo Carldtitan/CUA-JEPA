@@ -140,21 +140,26 @@ def check_vjepa2_encoder() -> dict:
         raise RuntimeError("The Model 4 stage-2 data volume is empty")
     branches = load_transition_tar(paths[0], limit=4)
     processor = AutoVideoProcessor.from_pretrained(model_id)
-    model = AutoModel.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    model = AutoModel.from_pretrained(model_id, dtype=torch.bfloat16)
     model.requires_grad_(False).eval().to("cuda")
 
-    def encode(image) -> torch.Tensor:
+    def as_video(image) -> torch.Tensor:
         array = np.asarray(image, dtype=np.uint8).copy()
         frame = torch.from_numpy(array).permute(2, 0, 1)
-        video = torch.stack((frame, frame), dim=0)
-        inputs = processor(video, return_tensors="pt").to("cuda")
+        return torch.stack((frame, frame), dim=0)
+
+    def encode_many(images) -> tuple[torch.Tensor, dict[str, list[int]]]:
+        inputs = processor([as_video(image) for image in images], return_tensors="pt")
+        input_shapes = {key: list(value.shape) for key, value in inputs.items()}
+        inputs = inputs.to("cuda")
         with torch.inference_mode():
             output = model(**inputs, skip_predictor=True)
-        return output.last_hidden_state.float().cpu()
+        return output.last_hidden_state.float().cpu(), input_shapes
 
-    current_first = encode(branches[0].current_image())
-    current_second = encode(branches[0].current_image())
-    futures = [encode(branch.future_image()) for branch in branches]
+    currents, input_shapes = encode_many([branches[0].current_image(), branches[0].current_image()])
+    futures, _ = encode_many([branch.future_image() for branch in branches])
+    current_first = currents[0]
+    current_second = currents[1]
     pair_distances: list[float] = []
     for first in range(4):
         for second in range(first + 1, 4):
@@ -163,7 +168,8 @@ def check_vjepa2_encoder() -> dict:
             )
     return {
         "model_id": model_id,
-        "hidden_shape": list(current_first.shape),
+        "processor_input_shapes": input_shapes,
+        "hidden_shape": list(currents.shape),
         "dtype": str(current_first.dtype),
         "repeat_max_difference": float((current_first - current_second).abs().max().item()),
         "future_pair_mse_min": min(pair_distances),

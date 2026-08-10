@@ -771,7 +771,7 @@ The local source metrics are:
 - **Mistake:** The Modal image included PyTorch and Transformers but did not include `torchvision`.
 - **Simple explanation:** The V-JEPA 2 video processor could not start without the image and video helper library.
 - **Correction:** Add a compatible `torchvision` version to the training dependencies and Modal image.
-- **Status:** Found during the encoder smoke test. The dependency correction is in progress.
+- **Status:** Corrected. The V-JEPA 2 encoder loaded and passed the first deterministic feature test.
 
 ## Current corrections in the training code
 
