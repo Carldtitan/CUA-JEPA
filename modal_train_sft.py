@@ -54,6 +54,59 @@ hf_cache_volume = modal.Volume.from_name(HF_CACHE_VOLUME_NAME, create_if_missing
     gpu="L4",
     cpu=4,
     memory=24_576,
+    timeout=30 * 60,
+    scaledown_window=60,
+    volumes={
+        "/training": training_volume,
+        "/root/.cache/huggingface": hf_cache_volume,
+    },
+)
+def check_sft_model_setup(variant: str = "model4") -> dict:
+    import torch
+    from PIL import Image
+
+    from cua_jepa.train_sft import (
+        SFTTrainConfig,
+        _configure_model,
+        _gradient_norm,
+        _parameter_groups,
+        make_training_inputs,
+    )
+
+    config = SFTTrainConfig(max_pixels=65_536, min_pixels=65_536)
+    jepa_path = Path(JEPA_ADAPTER_PATH) if variant == "model4" else None
+    processor, model, source_sha256 = _configure_model(config, variant, jepa_path)
+    model.to("cuda").train()
+    vision_parameters, language_parameters = _parameter_groups(model)
+    image_path = Path("/tmp/sft-setup.webp")
+    Image.new("RGB", (256, 256), "white").save(image_path)
+    record = {
+        "instruction": "Click the center of the screen.",
+        "history": [],
+        "target": '{"action":"click","x":0.5,"y":0.5}',
+    }
+    inputs = make_training_inputs(processor, record, image_path, torch.device("cuda"))
+    output = model(**inputs)
+    output.loss.backward()
+    return {
+        "variant": variant,
+        "loss": float(output.loss.detach().item()),
+        "vision_lora_parameters": sum(value.numel() for value in vision_parameters),
+        "language_lora_parameters": sum(value.numel() for value in language_parameters),
+        "vision_gradient_norm": _gradient_norm(vision_parameters),
+        "language_gradient_norm": _gradient_norm(language_parameters),
+        "source_jepa_adapter_sha256": source_sha256,
+        "input_ids_shape": list(inputs["input_ids"].shape),
+        "pixel_values_shape": list(inputs["pixel_values"].shape),
+        "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
+    }
+
+
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4,
+    memory=24_576,
     timeout=4 * 60 * 60,
     scaledown_window=60,
     volumes={
@@ -111,5 +164,8 @@ def run_sft_transfer(variant: str, mode: str, seed: int = 20260810) -> dict:
 
 @app.local_entrypoint()
 def main(variant: str = "model4", mode: str = "smoke", seed: int = 20260810) -> None:
-    result = run_sft_transfer.remote(variant=variant, mode=mode, seed=seed)
+    if mode == "setup":
+        result = check_sft_model_setup.remote(variant=variant)
+    else:
+        result = run_sft_transfer.remote(variant=variant, mode=mode, seed=seed)
     print(json.dumps(result, indent=2, sort_keys=True))
