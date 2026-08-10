@@ -51,9 +51,7 @@ def tar_file_manifest(paths: Iterable[str | Path], split: str) -> dict[str, Any]
         display_path = "/".join(parts[-3:]) if len(parts) >= 3 else path_value.name
         row = {"path": display_path, "bytes": size, "sha256": sha256}
         files.append(row)
-        manifest_digest.update(
-            f"{display_path}\0{size}\0{sha256}\n".encode("utf-8")
-        )
+        manifest_digest.update(f"{display_path}\0{size}\0{sha256}\n".encode("utf-8"))
     return {
         "split": split,
         "file_count": len(files),
@@ -370,8 +368,25 @@ def validate_run_artifacts(
         raise ValueError("Base Qwen parameters were trainable")
     if initialization["target_lora_trainable_parameter_count"] != 0:
         raise ValueError("Target LoRA parameters were trainable")
-    if initialization["initial_online_target_max_difference"] != 0.0:
-        raise ValueError("Online and target LoRA did not start identically")
+    has_lora = initialization["online_lora_parameter_count"] > 0
+    if has_lora:
+        if initialization["initial_online_target_max_difference"] != 0.0:
+            raise ValueError("Online and target LoRA did not start identically")
+        if (
+            not initialization["initial_online_lora_sha256"]
+            or initialization["initial_online_lora_sha256"]
+            != initialization["initial_target_lora_sha256"]
+        ):
+            raise ValueError("Online and target LoRA hashes did not start identically")
+    elif any(
+        initialization[key] is not None
+        for key in (
+            "initial_online_target_max_difference",
+            "initial_online_lora_sha256",
+            "initial_target_lora_sha256",
+        )
+    ):
+        raise ValueError("Frozen-encoder run reports unexpected LoRA initialization data")
 
     training_fields = {
         "step",
@@ -493,20 +508,21 @@ def validate_run_artifacts(
         raise ValueError("JEPA head weights cannot be loaded") from error
     from safetensors import safe_open
 
-    for adapter_directory in (
-        root / "qwen_vision_online_lora",
-        root / "qwen_vision_target_lora",
-    ):
-        adapter_files = list(adapter_directory.rglob("*.safetensors"))
-        if not adapter_files:
-            raise ValueError(f"Adapter weights are missing from {adapter_directory}")
-        for adapter_file in adapter_files:
-            try:
-                with safe_open(adapter_file, framework="pt", device="cpu") as handle:
-                    if not list(handle.keys()):
-                        raise ValueError("Adapter contains no tensors")
-            except Exception as error:
-                raise ValueError(f"Adapter cannot be loaded: {adapter_file}") from error
+    if has_lora:
+        for adapter_directory in (
+            root / "qwen_vision_online_lora",
+            root / "qwen_vision_target_lora",
+        ):
+            adapter_files = list(adapter_directory.rglob("*.safetensors"))
+            if not adapter_files:
+                raise ValueError(f"Adapter weights are missing from {adapter_directory}")
+            for adapter_file in adapter_files:
+                try:
+                    with safe_open(adapter_file, framework="pt", device="cpu") as handle:
+                        if not list(handle.keys()):
+                            raise ValueError("Adapter contains no tensors")
+                except Exception as error:
+                    raise ValueError(f"Adapter cannot be loaded: {adapter_file}") from error
 
     return {
         "passed": True,

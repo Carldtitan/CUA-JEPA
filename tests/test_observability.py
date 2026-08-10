@@ -62,7 +62,7 @@ def test_parameter_hash_gradient_norm_and_cost_are_measured() -> None:
     assert cost == {"gpu_usd": 10.0, "cpu_usd": 10.0, "memory_usd": 10.0, "total_usd": 30.0}
 
 
-def _build_fake_run(root: Path) -> None:
+def _build_fake_run(root: Path, with_lora: bool = True) -> None:
     write_json(
         root / "run_manifest.json",
         {
@@ -98,12 +98,12 @@ def _build_fake_run(root: Path) -> None:
         root / "initialization_audit.json",
         {
             "base_qwen_trainable_parameter_count": 0,
-            "online_lora_parameter_count": 1,
+            "online_lora_parameter_count": 1 if with_lora else 0,
             "target_lora_trainable_parameter_count": 0,
             "optimizer_parameter_count": 3,
-            "initial_online_target_max_difference": 0.0,
-            "initial_online_lora_sha256": "a",
-            "initial_target_lora_sha256": "a",
+            "initial_online_target_max_difference": 0.0 if with_lora else None,
+            "initial_online_lora_sha256": "a" if with_lora else None,
+            "initial_target_lora_sha256": "a" if with_lora else None,
             "initial_action_encoder_sha256": "b",
             "initial_predictor_sha256": "c",
         },
@@ -172,9 +172,15 @@ def _build_fake_run(root: Path) -> None:
         root / "resource_usage.jsonl",
         {"step": 2, "estimated_modal_cost_usd": {"total_usd": 0.1}},
     )
-    write_json(root / "final_metrics.json", {"steps": 2, "timing": {}, "stop_reason": "maximum_steps_completed"})
+    write_json(
+        root / "final_metrics.json",
+        {"steps": 2, "timing": {}, "stop_reason": "maximum_steps_completed"},
+    )
     write_json(root / "metrics.json", {})
-    write_json(root / "stop_reason.json", {"reason": "maximum_steps_completed", "steps": 2, "requested_steps": 2})
+    write_json(
+        root / "stop_reason.json",
+        {"reason": "maximum_steps_completed", "steps": 2, "requested_steps": 2},
+    )
     write_json(root / "bundle_order.json", {"train": ["b"], "validation": ["v"]})
     torch.save({"action_encoder": {}, "predictor": {}}, root / "jepa_heads.pt")
     checkpoint = root / "checkpoints" / "step-000002"
@@ -196,10 +202,11 @@ def _build_fake_run(root: Path) -> None:
         checkpoint / "training_state.pt",
     )
     write_json(checkpoint / "checkpoint_metadata.json", {})
-    for adapter in ("qwen_vision_online_lora", "qwen_vision_target_lora"):
-        directory = root / adapter
-        directory.mkdir()
-        save_file({"weight": torch.ones(1)}, directory / "adapter_model.safetensors")
+    if with_lora:
+        for adapter in ("qwen_vision_online_lora", "qwen_vision_target_lora"):
+            directory = root / adapter
+            directory.mkdir()
+            save_file({"weight": torch.ones(1)}, directory / "adapter_model.safetensors")
 
 
 def test_artifact_validator_accepts_complete_run_and_rejects_missing_metric(
@@ -216,3 +223,9 @@ def test_artifact_validator_accepts_complete_run_and_rejects_missing_metric(
     (tmp_path / "train.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="online_lora_gradient_norm"):
         validate_run_artifacts(tmp_path, expected_steps=2)
+
+
+def test_artifact_validator_accepts_frozen_encoder_run(tmp_path: Path) -> None:
+    _build_fake_run(tmp_path, with_lora=False)
+    report = validate_run_artifacts(tmp_path, expected_steps=2)
+    assert report["passed"]

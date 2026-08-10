@@ -707,7 +707,7 @@ The local source metrics are:
 - **Mistake:** The live validation monitor evaluated Jira only. The final validation evaluated Jira and Slack.
 - **Simple explanation:** The live score reached 29%, but the final score reached 38% because the evaluated applications changed.
 - **Correction:** Build each monitoring subset with fixed samples from every validation application.
-- **Status:** Corrected in code. The monitor now selects bundles round-robin across applications. A remote smoke test is pending.
+- **Status:** Corrected and remotely tested. The monitor now selects bundles round-robin across applications.
 
 ### 81. Overall accuracy hid weak performance on important action groups
 
@@ -756,6 +756,14 @@ The local source metrics are:
 - **Simple explanation:** Modal printed a check mark. The Windows console could not print it, so the local controller stopped.
 - **Correction:** Set `PYTHONUTF8=1` for every Modal command on this computer.
 - **Status:** Corrected. The next Modal launch started successfully.
+
+### 87. Artifact validation incorrectly required LoRA in a frozen-encoder run
+
+- **Technical term:** Configuration-insensitive validation.
+- **Mistake:** The artifact validator required identical online and target LoRA adapters when the pilot did not use LoRA.
+- **Simple explanation:** Training completed, but the final check looked for model parts that did not exist.
+- **Correction:** Validate LoRA identity only when the run has LoRA parameters. Require empty LoRA fields for a frozen-encoder run.
+- **Status:** Corrected. The new frozen-encoder regression test passes.
 
 ## Current corrections in the training code
 
