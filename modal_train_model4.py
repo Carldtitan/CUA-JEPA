@@ -385,6 +385,7 @@ def run_vjepa2_gui_pilot(
         "same_app_smoke",
         "scaled_same_app_diagnostic",
         "full_data_separation",
+        "full_data_smoke",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -402,6 +403,7 @@ def run_vjepa2_gui_pilot(
         "counterfactual_gated_smoke",
         "qwen_fusion_smoke",
         "same_app_smoke",
+        "full_data_smoke",
     }:
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -507,6 +509,7 @@ def run_vjepa2_gui_pilot(
         "same_app_smoke",
         "scaled_same_app_diagnostic",
         "full_data_separation",
+        "full_data_smoke",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -612,6 +615,7 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_same_app_smoke",
         "vjepa2_gui_scaled_same_app_diagnostic",
         "vjepa2_gui_full_data_separation",
+        "vjepa2_gui_full_data_smoke",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(
