@@ -701,6 +701,38 @@ The local source metrics are:
 - **Correction:** Use validation and test results for the main claim. Treat training accuracy only as proof that the model can fit the training signal.
 - **Status:** Found during the active full run. Later validation checkpoints and the final test are pending.
 
+### 80. The live validation monitor did not cover both validation applications
+
+- **Technical term:** Non-representative monitoring subset.
+- **Mistake:** The live validation monitor evaluated Jira only. The final validation evaluated Jira and Slack.
+- **Simple explanation:** The live score reached 29%, but the final score reached 38% because the evaluated applications changed.
+- **Correction:** Build each monitoring subset with fixed samples from every validation application.
+- **Status:** Found after the full run. The saved final validation result is valid. The monitor design needs correction.
+
+### 81. Overall accuracy hid weak performance on important action groups
+
+- **Technical term:** Aggregate-metric masking.
+- **Mistake:** The overall 38% accuracy can look broad, but typing reached 83.3% while clicking reached 30.3%.
+- **Simple explanation:** Easy typing and small screen changes raised the total score. Large screen changes stayed near chance.
+- **Correction:** Report action type, application, and screen-change groups beside every overall score. Use a macro average for model selection.
+- **Status:** Found after the full run. The required group metrics were saved. The model-selection rule needs correction.
+
+### 82. The full-data run did not use multi-step GUI sequences
+
+- **Technical term:** Objective and implementation mismatch.
+- **Mistake:** We discussed V-JEPA 2-AC style sequence training, but the full-data run used independent one-step transitions.
+- **Simple explanation:** The model saw one screen and one action at a time. It did not practice predicting several actions into the future.
+- **Correction:** Add ordered trajectory data. Train with one-step teacher forcing and a two-step rollout loss. Check this feature in a small test before another full run.
+- **Status:** Found after the full-data run. The saved model is a valid one-step baseline. Multi-step training is not implemented.
+
+### 83. The full Model 4 experiment is not complete
+
+- **Technical term:** Experimental scope ambiguity.
+- **Mistake:** We called the completed JEPA run a full Model 4 run. It did not include the common SFT stage or the other three model controls.
+- **Simple explanation:** We completed one Model 4 training stage. We did not complete the four-model comparison.
+- **Correction:** Call this artifact the Model 4 one-step JEPA run. Complete the shared SFT stage and matched controls before we make the main research claim.
+- **Status:** Found after the full-data run. The artifact name stays unchanged for traceability. Future reports must use the corrected name.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
