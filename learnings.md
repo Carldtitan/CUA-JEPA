@@ -1233,3 +1233,11 @@ The following work is not complete:
 - **Simple explanation:** Small button labels and menu text can become too small for the model to read.
 - **Correction:** Use a 1,048,576-pixel limit for SFT. A Model 4 forward and backward test used 12.74 GiB on an L4 with 24 GiB. The old limit used 6.70 GiB. Both Model 2 and Model 4 will use the same larger limit.
 - **Status:** Corrected before SFT. The larger setting passed the Modal GPU test.
+
+### 140. The active data job was not started in detached mode
+
+- **Technical term:** Client-disconnect resilience.
+- **Mistake:** The large Modal data command was started without `modal run --detach`.
+- **Simple explanation:** A Wi-Fi loss can stop an app that is tied to the local command.
+- **Correction:** Keep the active job because restarting it would discard a large temporary download. Use `--detach` for all later smoke tests, pilots, and full runs.
+- **Status:** Partly corrected. The active data job is healthy but is still connected. All later commands will be detached.

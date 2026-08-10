@@ -197,3 +197,23 @@ This is a dynamics-pilot result. It does not yet show that JEPA improves downstr
 ## Important limit
 
 The current data contains one-step transitions. It does not contain real consecutive multi-step screenshot sequences. Do not use a multi-step rollout loss until those sequences exist.
+
+## Downstream SFT transfer test
+
+This test asks whether the saved Model 4 JEPA vision adapter improves next-action SFT.
+
+Model 2 starts from the pinned base Qwen model. Model 4 starts from the same Qwen model plus the saved JEPA vision adapter. Both models get a new language LoRA adapter. Both models use the same 2,000 training examples, the same order, and the same 250 validation examples.
+
+AgentNet is used only for supervised next-action SFT. The JEPA stage uses the custom transition data.
+
+Use detached Modal runs. A detached run continues if the local network disconnects.
+
+```powershell
+python -m modal run --detach modal_prepare_sft.py --mode ingest
+python -m modal run --detach modal_train_sft.py --variant model4 --mode smoke
+python -m modal run --detach modal_train_sft.py --variant model2 --mode smoke
+python -m modal run --detach modal_train_sft.py --variant model4 --mode pilot
+python -m modal run --detach modal_train_sft.py --variant model2 --mode pilot
+```
+
+Do not start the full pair until both pilots pass their data, gradient, generation, and artifact checks.
