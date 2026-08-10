@@ -1193,3 +1193,11 @@ The following work is not complete:
 - **Simple explanation:** A copied screenshot could enter training and validation under two names.
 - **Correction:** Hash every stored screenshot after conversion. Reject any exact image hash shared by train and validation. Report duplicates within the full set.
 - **Status:** Added before SFT. The final image audit is waiting for the remaining archive download.
+
+### 135. The first local QA download used a file path as a directory
+
+- **Technical term:** Destination-path type mismatch.
+- **Mistake:** The first Modal volume download used `tmp/sft-qa-images` as if it was a directory. The Modal client created it as an empty file.
+- **Simple explanation:** The next download could not put images inside that path because the path was a file.
+- **Correction:** Confirm that the file was empty and inside the repository. Remove it. Create the directory. Use a trailing slash for the directory download.
+- **Status:** Corrected. All 750 Ubuntu QA images downloaded locally. No remote data was changed.
