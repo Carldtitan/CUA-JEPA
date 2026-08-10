@@ -1401,3 +1401,27 @@ The following work is not complete:
 - **Simple explanation:** A live line does not say whether it came from Model 2 or Model 4.
 - **Correction:** Add `variant` and `run_id` to every future training and evaluation event. Keep the current run because each saved output directory is separate and has its correct model label.
 - **Status:** Found at step 30 of the active paired full run. Final artifacts remain identifiable.
+
+### 161. The 32-example live check overstated final SFT quality
+
+- **Technical term:** Monitor-set sampling bias.
+- **Mistake:** We used a fixed 32-example subset to watch training. Its scores were much higher than the final scores on all 250 validation examples.
+- **Simple explanation:** The small live check contained easier examples. It made both models look better than they were.
+- **Correction:** Use the live check only as a health signal. Use the full 250-example validation set for model claims. A later run should use a larger, balanced live set if the extra evaluation cost is acceptable.
+- **Status:** Confirmed after the full run. Model 2 changed from 68.8% on the step-400 monitor to 51.2% on final validation. Model 4 changed from 34.4% to 18.4%.
+
+### 162. The action-JEPA visual LoRA damaged the starting action policy
+
+- **Technical term:** Negative transfer.
+- **Mistake:** We assumed that a visual LoRA with 38% future-screen matching would be a useful starting point for action SFT.
+- **Simple explanation:** Learning to match future screens did not preserve the visual features that Qwen needs to choose GUI actions.
+- **Correction:** Keep the failed result as evidence. Do not describe the 38% JEPA score as policy quality. Test better transfer methods that protect Qwen's original visual features, such as a separate JEPA branch, gated fusion, or a smaller adapter update.
+- **Status:** Confirmed in the matched full run. Before SFT, Model 2 scored 40.8% and Model 4 scored 13.6%. After SFT, Model 2 scored 51.2% and Model 4 scored 18.4%.
+
+### 163. The first full artifact download used a short command timeout
+
+- **Technical term:** Artifact-transfer timeout.
+- **Mistake:** The local download command had a two-minute timeout for both complete SFT folders.
+- **Simple explanation:** The command ended before it could confirm the large download.
+- **Correction:** Check the required final adapter files and audit files after a timeout. Use longer transfers or download only the required files first. Keep Modal as the complete remote copy.
+- **Status:** Contained. The required Model 2 and Model 4 final LoRAs, metrics, predictions, and audit files are present under `artifacts/`. The complete remote folders remain in the Modal volume.
