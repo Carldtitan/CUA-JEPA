@@ -16,6 +16,7 @@ from cua_jepa.jepa_data import TransitionSample, group_by_bundle, load_transitio
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    action_spatial_features,
     actions_to_tensors,
     change_patch_weights,
     latent_prediction_loss,
@@ -36,12 +37,16 @@ class JEPATrainConfig:
     learning_rate: float = 0.0002
     weight_decay: float = 0.01
     ema_decay: float = 0.996
-    changed_patch_weight: float = 4.0
+    freeze_target_encoder: bool = True
+    changed_patch_weight: float = 1.0
+    unchanged_patch_weight: float = 0.05
+    changed_token_threshold: float = 0.01
     gradient_accumulation_steps: int = 1
     max_steps: int = 100
     max_train_transitions: int = 100
     max_validation_transitions: int = 100
     evaluation_bundles: int = 8
+    validation_evaluation_bundles: int = 0
     log_every: int = 5
 
     @classmethod
@@ -151,7 +156,8 @@ def evaluate_action_sensitivity(
     max_bundles: int,
 ) -> dict[str, float]:
     groups = [branches for branches in group_by_bundle(samples).values() if len(branches) == 4]
-    groups = groups[:max_bundles]
+    if max_bundles > 0:
+        groups = groups[:max_bundles]
     if not groups:
         return {"bundles": 0.0, "four_way_accuracy": 0.0}
     vision.eval()
@@ -160,6 +166,9 @@ def evaluate_action_sensitivity(
     correct_ranks = 0
     correct_distances: list[float] = []
     shuffled_distances: list[float] = []
+    target_pair_distances: list[float] = []
+    target_pair_distances_unweighted: list[float] = []
+    prediction_pair_distances: list[float] = []
     for branches in groups:
         current_image = branches[0].current_image()
         context_inputs = processor(images=[current_image], return_tensors="pt")
@@ -193,7 +202,37 @@ def evaluate_action_sensitivity(
         _set_adapter(vision, "online")
         actions = [branch.action for branch in branches]
         embeddings = _action_embedding(action_encoder, actions, device)
-        predictions = [predictor(context_tokens, embeddings[index : index + 1]) for index in range(4)]
+        spatial_actions = action_spatial_features(
+            actions, context_inputs["image_grid_thw"][0], device
+        )
+        predictions = [
+            predictor(
+                context_tokens,
+                embeddings[index : index + 1],
+                spatial_actions[index : index + 1],
+            )
+            for index in range(4)
+        ]
+        for first in range(4):
+            for second in range(first + 1, 4):
+                pair_weights = torch.maximum(target_weights[first], target_weights[second])
+                target_pair_distances.append(
+                    float(
+                        latent_prediction_loss(
+                            targets[first], targets[second], pair_weights
+                        ).item()
+                    )
+                )
+                target_pair_distances_unweighted.append(
+                    float(latent_prediction_loss(targets[first], targets[second]).item())
+                )
+                prediction_pair_distances.append(
+                    float(
+                        latent_prediction_loss(
+                            predictions[first], predictions[second], pair_weights
+                        ).item()
+                    )
+                )
         for index, prediction in enumerate(predictions):
             distances = [
                 float(latent_prediction_loss(prediction, target, target_weights[target_index]).item())
@@ -214,12 +253,24 @@ def evaluate_action_sensitivity(
     action_encoder.train()
     predictor.train()
     count = len(groups) * 4
+    target_pair_mean = sum(target_pair_distances) / len(target_pair_distances)
+    prediction_pair_mean = sum(prediction_pair_distances) / len(prediction_pair_distances)
     return {
         "bundles": float(len(groups)),
         "four_way_accuracy": correct_ranks / count,
         "correct_action_distance": sum(correct_distances) / count,
         "shuffled_action_distance": sum(shuffled_distances) / count,
         "shuffled_minus_correct": (sum(shuffled_distances) - sum(correct_distances)) / count,
+        "target_pair_distance_mean": target_pair_mean,
+        "target_pair_distance_min": min(target_pair_distances),
+        "target_pair_distance_max": max(target_pair_distances),
+        "target_pair_distance_unweighted_mean": sum(target_pair_distances_unweighted)
+        / len(target_pair_distances_unweighted),
+        "prediction_action_distance_mean": prediction_pair_mean,
+        "prediction_action_distance_min": min(prediction_pair_distances),
+        "prediction_action_distance_max": max(prediction_pair_distances),
+        "prediction_to_target_separation_ratio": prediction_pair_mean
+        / max(target_pair_mean, 1e-8),
     }
 
 
@@ -285,7 +336,7 @@ def train_model4_jepa(
         action_encoder,
         predictor,
         device,
-        config.evaluation_bundles,
+        config.validation_evaluation_bundles,
     )
 
     step = 0
@@ -305,13 +356,16 @@ def train_model4_jepa(
                 future_tokens = _encode(vision, "target", future_pixels, future_grid)
             _set_adapter(vision, "online")
             action = _action_embedding(action_encoder, [sample.action], device)
-            prediction = predictor(current_tokens, action)
+            spatial_action = action_spatial_features([sample.action], current_grid[0], device)
+            prediction = predictor(current_tokens, action, spatial_action)
             weights = change_patch_weights(
                 current,
                 future,
                 current_grid[0],
                 device,
                 changed_weight=config.changed_patch_weight,
+                unchanged_weight=config.unchanged_patch_weight,
+                changed_token_threshold=config.changed_token_threshold,
             )
             loss = latent_prediction_loss(prediction, future_tokens, weights)
             (loss / config.gradient_accumulation_steps).backward()
@@ -321,7 +375,8 @@ def train_model4_jepa(
                 clip_grad_norm_(trainable, max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-                copy_online_adapter_to_target(vision, decay=config.ema_decay)
+                if not config.freeze_target_encoder:
+                    copy_online_adapter_to_target(vision, decay=config.ema_decay)
             if step == 1 or step % config.log_every == 0:
                 record = {
                     "step": step,
@@ -340,7 +395,8 @@ def train_model4_jepa(
         clip_grad_norm_(trainable, max_norm=1.0)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-        copy_online_adapter_to_target(vision, decay=config.ema_decay)
+        if not config.freeze_target_encoder:
+            copy_online_adapter_to_target(vision, decay=config.ema_decay)
 
     final_train = evaluate_action_sensitivity(
         train_samples,
@@ -358,7 +414,7 @@ def train_model4_jepa(
         action_encoder,
         predictor,
         device,
-        config.evaluation_bundles,
+        config.validation_evaluation_bundles,
     )
     elapsed = time.perf_counter() - started
     adapter_path = output_path / "qwen_vision_online_lora"

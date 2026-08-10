@@ -11,11 +11,15 @@
   "learning_rate": 0.0002,
   "weight_decay": 0.01,
   "ema_decay": 0.996,
-  "changed_patch_weight": 4.0,
+  "freeze_target_encoder": true,
+  "changed_patch_weight": 1.0,
+  "unchanged_patch_weight": 0.05,
+  "changed_token_threshold": 0.01,
   "gradient_accumulation_steps": 1,
   "max_steps": 100,
   "max_train_transitions": 100,
   "max_validation_transitions": 100,
   "evaluation_bundles": 8,
+  "validation_evaluation_bundles": 0,
   "log_every": 5
 }

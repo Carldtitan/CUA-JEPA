@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    action_spatial_features,
     actions_to_tensors,
     change_patch_weights,
     latent_prediction_loss,
@@ -30,10 +31,39 @@ def test_predictor_and_latent_loss_backpropagate() -> None:
     current = torch.randn(6, 32, requires_grad=True)
     target = torch.randn(6, 32)
     action = torch.randn(1, 32)
-    loss = latent_prediction_loss(predictor(current, action), target)
+    spatial_action = torch.randn(1, 6, 3)
+    prediction = predictor(current, action, spatial_action)
+    loss = latent_prediction_loss(prediction, target)
     loss.backward()
+    assert prediction.shape == target.shape
     assert current.grad is not None
     assert any(parameter.grad is not None for parameter in predictor.parameters())
+
+
+def test_action_conditioning_changes_predictions() -> None:
+    torch.manual_seed(3)
+    predictor = ActionConditionedPredictor(
+        latent_dim=32, hidden_dim=32, action_dim=32, layers=2, heads=4
+    )
+    current = torch.randn(6, 32)
+    actions = torch.stack((torch.zeros(32), torch.ones(32)))
+    spatial = torch.zeros(2, 6, 3)
+    predictions = predictor(current, actions, spatial)
+    assert predictions.shape == (2, 6, 32)
+    assert not torch.allclose(predictions[0], predictions[1])
+
+
+def test_click_coordinates_bind_to_visual_tokens() -> None:
+    left, right = action_spatial_features(
+        [
+            {"kind": "click", "x_normalized": 0.1, "y_normalized": 0.5},
+            {"kind": "click", "x_normalized": 0.9, "y_normalized": 0.5},
+        ],
+        grid_thw=torch.tensor([1, 4, 8]),
+        device=torch.device("cpu"),
+    )
+    assert left.shape == (8, 3)
+    assert left[:, 0].argmax() != right[:, 0].argmax()
 
 
 def test_change_weights_focus_on_modified_tokens() -> None:
@@ -45,8 +75,9 @@ def test_change_weights_focus_on_modified_tokens() -> None:
         future,
         grid_thw=torch.tensor([1, 4, 8]),
         device=torch.device("cpu"),
-        changed_weight=4.0,
+        changed_weight=1.0,
+        unchanged_weight=0.05,
     )
     assert weights.shape == (8,)
-    assert weights.max() > 1.0
-    assert weights.min() == 1.0
+    assert weights.max() == 1.0
+    assert weights.min() == 0.05

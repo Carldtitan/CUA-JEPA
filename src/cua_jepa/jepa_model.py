@@ -71,6 +71,73 @@ class ActionEncoder(nn.Module):
         return self.output(features)
 
 
+def action_spatial_features(
+    actions: Sequence[dict[str, Any]],
+    grid_thw: torch.Tensor,
+    device: torch.device,
+    sigma: float = 0.08,
+) -> torch.Tensor:
+    """Bind pointer actions to Qwen's merged visual-token grid."""
+
+    t, grid_h, grid_w = (int(value) for value in grid_thw.tolist())
+    pooled_h = grid_h // 2
+    pooled_w = grid_w // 2
+    y_values = (torch.arange(pooled_h, device=device, dtype=torch.float32) + 0.5) / pooled_h
+    x_values = (torch.arange(pooled_w, device=device, dtype=torch.float32) + 0.5) / pooled_w
+    y_grid, x_grid = torch.meshgrid(y_values, x_values, indexing="ij")
+    features: list[torch.Tensor] = []
+    for action in actions:
+        kind = str(action.get("kind", ""))
+        if kind not in {"click", "type"}:
+            spatial = torch.zeros((pooled_h, pooled_w, 3), device=device)
+        else:
+            action_x = float(action.get("x_normalized", 0.0) or 0.0)
+            action_y = float(action.get("y_normalized", 0.0) or 0.0)
+            x_offset = x_grid - action_x
+            y_offset = y_grid - action_y
+            heat = torch.exp(-(x_offset.square() + y_offset.square()) / (2.0 * sigma**2))
+            spatial = torch.stack((heat, heat * x_offset, heat * y_offset), dim=-1)
+        flattened = spatial.reshape(-1, 3)
+        if t > 1:
+            flattened = flattened.repeat(t, 1)
+        features.append(flattened)
+    return torch.stack(features, dim=0)
+
+
+class ActionConditionedBlock(nn.Module):
+    """A transformer block with action conditioning in both normalization layers."""
+
+    def __init__(self, hidden_dim: int, action_dim: int, heads: int) -> None:
+        super().__init__()
+        self.norm_attention = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.attention = nn.MultiheadAttention(hidden_dim, heads, batch_first=True)
+        self.norm_mlp = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.GELU(),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+        )
+        self.action_modulation = nn.Linear(action_dim, hidden_dim * 4)
+
+    @staticmethod
+    def _modulate(
+        values: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor
+    ) -> torch.Tensor:
+        return values * (1.0 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+    def forward(self, hidden: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        attention_scale, attention_shift, mlp_scale, mlp_shift = self.action_modulation(
+            action
+        ).chunk(4, dim=-1)
+        normalized = self._modulate(
+            self.norm_attention(hidden), attention_scale, attention_shift
+        )
+        attended, _ = self.attention(normalized, normalized, normalized, need_weights=False)
+        hidden = hidden + attended
+        normalized = self._modulate(self.norm_mlp(hidden), mlp_scale, mlp_shift)
+        return hidden + self.mlp(normalized)
+
+
 class ActionConditionedPredictor(nn.Module):
     def __init__(
         self,
@@ -83,28 +150,35 @@ class ActionConditionedPredictor(nn.Module):
         super().__init__()
         self.input_norm = nn.LayerNorm(latent_dim)
         self.input_projection = nn.Linear(latent_dim, hidden_dim)
-        self.action_projection = nn.Linear(action_dim, hidden_dim)
-        layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=0.0,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
+        self.spatial_action_projection = nn.Linear(3, hidden_dim, bias=False)
+        self.blocks = nn.ModuleList(
+            ActionConditionedBlock(hidden_dim, action_dim, heads) for _ in range(layers)
         )
-        self.transformer = nn.TransformerEncoder(layer, num_layers=layers)
+        self.output_norm = nn.LayerNorm(hidden_dim)
         self.output_projection = nn.Linear(hidden_dim, latent_dim)
-        self.delta_scale = nn.Parameter(torch.tensor(0.1))
 
-    def forward(self, current_tokens: torch.Tensor, action_embedding: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         squeeze = current_tokens.ndim == 2
         if squeeze:
             current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
         hidden = self.input_projection(self.input_norm(current_tokens.float()))
-        hidden = hidden + self.action_projection(action_embedding.float()).unsqueeze(1)
-        delta = self.output_projection(self.transformer(hidden))
-        prediction = current_tokens.float() + self.delta_scale * delta
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != hidden.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {hidden.shape}"
+                )
+            hidden = hidden + self.spatial_action_projection(spatial_action.float())
+        for block in self.blocks:
+            hidden = block(hidden, action_embedding.float())
+        # There is no direct current-to-future copy path.
+        prediction = self.output_projection(self.output_norm(hidden))
         return prediction.squeeze(0) if squeeze else prediction
 
 
@@ -113,7 +187,9 @@ def change_patch_weights(
     future: Image.Image,
     grid_thw: torch.Tensor,
     device: torch.device,
-    changed_weight: float = 4.0,
+    changed_weight: float = 1.0,
+    unchanged_weight: float = 0.05,
+    changed_token_threshold: float = 0.01,
     threshold: int = 12,
 ) -> torch.Tensor:
     """Create target-only loss weights aligned to Qwen's merged token grid."""
@@ -127,9 +203,11 @@ def change_patch_weights(
         (pooled_w, pooled_h), resample=Image.Resampling.BOX
     )
     values = torch.from_numpy(np.asarray(mask, dtype=np.float32).copy() / 255.0).flatten()
+    values = (values >= changed_token_threshold).float()
     if t > 1:
         values = values.repeat(t)
-    return (1.0 + changed_weight * values).to(device=device)
+    weights = unchanged_weight + (changed_weight - unchanged_weight) * values
+    return weights.to(device=device)
 
 
 def latent_prediction_loss(
