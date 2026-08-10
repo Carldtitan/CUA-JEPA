@@ -19,6 +19,30 @@ The controlled experiment has four models:
 
 Model 4 versus Model 3 is the main causal comparison. It tests whether correct action information adds value.
 
+## Corrected dynamics pilot results
+
+The corrected pilot used 488 training bundles and all 125 held-out bundles. Each run used 500 updates.
+
+| Objective | Seed | Train accuracy | Held-out accuracy | Shuffled-action gap | Prediction/target spread |
+|---|---:|---:|---:|---:|---:|
+| Pure JEPA | 20260809 | 19.0% | 25.6% | 0.00245 | 0.332 |
+| Pure JEPA | 20260810 | 18.0% | 24.8% | 0.00271 | 0.430 |
+| JEPA plus InfoNCE | 20260809 | 56.0% | 36.0% | 0.01137 | 0.409 |
+| JEPA plus InfoNCE | 20260810 | 63.0% | 34.8% | 0.01349 | 0.575 |
+
+The mean pure JEPA accuracy was 25.2%. This equals the 25% chance level.
+
+The mean JEPA plus InfoNCE accuracy was 35.4%. The mean paired improvement was 10.2 percentage points.
+
+This result is a useful dynamics-learning signal. It is not yet evidence that Model 4 improves downstream computer-use task success.
+
+The local source metrics are:
+
+- `artifacts/model4-pure-seed20260809-20260810T022122Z/metrics.json`
+- `artifacts/model4-pure-seed20260810-20260810T023405Z/metrics.json`
+- `artifacts/model4-separation-seed20260809-20260810T022748Z/metrics.json`
+- `artifacts/model4-separation-seed20260810-20260810T024235Z/metrics.json`
+
 ## Research-design learnings
 
 ### 1. The original thesis included three different claims
@@ -303,7 +327,7 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Mistake:** The original article explicitly warned that latent prediction can collapse. The first loss used regression without a suitable action-sensitive regularizer.
 - **Simple explanation:** We read the warning but did not turn it into a required test and loss.
 - **Correction:** Add variance, covariance, and action-relation regularization. Keep InfoNCE as a separate comparison.
-- **Status:** Fixed in the current code. New results are pending.
+- **Status:** Fixed in the current code. The corrected pure runs no longer produced nearly identical action predictions.
 
 ### 36. We first used the wrong collapse label
 
@@ -319,7 +343,7 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Mistake:** The predictor learned the full future representation from a mostly unchanged current screen.
 - **Simple explanation:** The easiest answer was an average screen that ignored the action.
 - **Correction:** Predict `future representation - current representation`. This is delta prediction.
-- **Status:** Fixed in the current code. New results are pending.
+- **Status:** Fixed in the current code. Delta loss decreased in both repeated runs.
 
 ### 38. A falling regression loss did not prove action learning
 
@@ -344,7 +368,7 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Simple explanation:** Four-way validation accuracy was 25.2%, near the 25% chance level.
 - **Evidence:** Prediction action distance was about `0.0020`. The target distance was about `0.3875`.
 - **Correction:** Add non-contrastive bundle regularization first. Then compare with action separation.
-- **Status:** New pure run pending.
+- **Status:** Repeated. The corrected pure runs scored 25.6% and 24.8%. They stayed at chance.
 
 ### 41. InfoNCE improved separation but changed the objective
 
@@ -353,7 +377,7 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Simple explanation:** InfoNCE explicitly treats the other bundle futures as incorrect choices.
 - **Evidence:** Validation accuracy increased to 29.4%. Prediction action distance increased to about `0.0272`.
 - **Correction:** Report pure JEPA and JEPA plus action separation as separate experiments.
-- **Status:** Fixed in experiment naming.
+- **Status:** Repeated. The corrected InfoNCE runs scored 36.0% and 34.8%.
 
 ### 42. The first separation result showed overfitting
 
@@ -361,7 +385,7 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Mistake:** A 29.4% validation result could be reported without its 52% training result.
 - **Simple explanation:** The model learned the training bundles much better than unseen bundles.
 - **Correction:** Report both scores. Add repeated seeds and results by application and action type.
-- **Status:** Multi-seed and breakdown support added. New runs are pending.
+- **Status:** Confirmed. Mean training accuracy was 59.5%. Mean held-out accuracy was 35.4%.
 
 ### 43. Collapse checks happened after training
 
@@ -429,6 +453,57 @@ Model 4 versus Model 3 is the main causal comparison. It tests whether correct a
 - **Correction:** Make small, meaningful commits at verified milestones. Preserve a clear history.
 - **Status:** Current practice.
 
+### 51. Prediction diversity does not prove correct action learning
+
+- **Technical term:** Unaligned diversity.
+- **Mistake:** We could have treated increased prediction spread as proof that the action mapping worked.
+- **Simple explanation:** The model can make four different predictions and still match each action to the wrong future.
+- **Evidence:** Pure JEPA had spread ratios of `0.332` and `0.430`, but its mean accuracy was 25.2%.
+- **Correction:** Measure correct pairing with four-way accuracy and shuffled-action tests.
+- **Status:** Confirmed by two seeds.
+
+### 52. Non-contrastive regularization fixed one failure but not the task
+
+- **Technical term:** Necessary but insufficient regularization.
+- **Mistake:** Variance, covariance, and relation matching could have been expected to solve the full action-learning problem.
+- **Simple explanation:** These losses stop identical predictions. They do not strongly identify which prediction belongs to which action.
+- **Correction:** Keep the pure result as the non-contrastive control. Use a separate action-separation objective when correct pairing is required.
+- **Status:** Confirmed by two seeds.
+
+### 53. The InfoNCE signal repeated across seeds
+
+- **Technical term:** Seed replication.
+- **Mistake:** The earlier 29.4% result came from one seed and could have been noise.
+- **Simple explanation:** A second run was necessary before trusting the direction of the result.
+- **Evidence:** The corrected held-out scores were 36.0% and 34.8%.
+- **Correction:** Report the two scores and their 35.4% mean. Do not report only the best run.
+- **Status:** Confirmed.
+
+### 54. Action types do not improve equally
+
+- **Technical term:** Heterogeneous treatment effect.
+- **Mistake:** One overall score can hide which actions the model learns.
+- **Simple explanation:** Typing improved much more than scrolling.
+- **Evidence:** Across the two InfoNCE runs, mean accuracy was about 62.3% for typing, 33.0% for clicks, and 23.6% for scrolling.
+- **Correction:** Report each action type. Improve scroll data or its action representation before making a broad action-learning claim.
+- **Status:** Open problem for scrolling.
+
+### 55. A chance-level model is not always collapsed
+
+- **Technical term:** Failure-mode separation.
+- **Mistake:** Chance performance and action-conditioning collapse were treated as the same failure.
+- **Simple explanation:** A model can make diverse predictions that are consistently paired with the wrong actions.
+- **Correction:** Use one check for identical predictions. Use another check for incorrect action-future pairing.
+- **Status:** Confirmed by the corrected pure runs.
+
+### 56. Aggregate metrics are not enough for a strong confidence interval
+
+- **Technical term:** Clustered evaluation.
+- **Mistake:** The evaluator saved aggregate counts but not one record for each held-out bundle.
+- **Simple explanation:** The four predictions in one bundle can be related. They should not always be treated as four independent trials.
+- **Correction:** Save per-bundle predictions and correctness. Use a bundle bootstrap for confidence intervals.
+- **Status:** Open evaluation improvement.
+
 ## Current corrections in the training code
 
 The current Model 4 Stage 2 code now does these actions:
@@ -452,13 +527,11 @@ The current Model 4 Stage 2 code now does these actions:
 
 The following work is not complete:
 
-1. Run the corrected pure JEPA experiment with at least two seeds.
-2. Run the corrected JEPA plus action-separation experiment with the same seeds.
-3. Compare all runs on the same 125 held-out bundles.
-4. Prepare the controlled SFT dataset.
-5. Train Models 2, 3, and 4 with identical SFT settings.
-6. Measure task success and SFT sample efficiency.
-7. Collect real multi-step sequences if the one-step MVP shows a useful signal.
-8. Collect more non-search typing states.
-9. Test on real, unseen software.
-
+1. Save per-bundle evaluation records and calculate bundle-level confidence intervals.
+2. Prepare the controlled SFT dataset.
+3. Train Models 2, 3, and 4 with identical SFT settings.
+4. Measure task success and SFT sample efficiency.
+5. Collect real multi-step sequences if the one-step MVP shows a useful signal.
+6. Collect more non-search typing states.
+7. Improve or rebalance scroll transitions.
+8. Test on real, unseen software.

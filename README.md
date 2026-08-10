@@ -79,6 +79,21 @@ python -m modal run modal_train_model4.py --mode separation --seed 20260810
 
 Outputs persist in the `cua-jepa-training-v1` Modal Volume.
 
+## Corrected pilot result
+
+Both objectives ran with seeds `20260809` and `20260810`.
+
+| Objective | Seed 1 | Seed 2 | Mean |
+|---|---:|---:|---:|
+| Pure JEPA | 25.6% | 24.8% | 25.2% |
+| JEPA plus InfoNCE | 36.0% | 34.8% | 35.4% |
+
+Chance accuracy is 25%.
+
+The non-contrastive losses prevented identical action predictions. They did not learn the correct action-to-future pairing. InfoNCE produced a repeated 10.2-point mean improvement over pure JEPA.
+
+This is a dynamics-pilot result. It does not yet show that JEPA improves downstream computer-use task success.
+
 ## Important limit
 
 The current data contains one-step transitions. It does not contain real consecutive multi-step screenshot sequences. Do not use a multi-step rollout loss until those sequences exist.
