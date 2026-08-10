@@ -1240,7 +1240,7 @@ The following work is not complete:
 - **Mistake:** The large Modal data command was started without `modal run --detach`.
 - **Simple explanation:** A Wi-Fi loss can stop an app that is tied to the local command.
 - **Correction:** Keep the active job because restarting it would discard a large temporary download. Use `--detach` for all later smoke tests, pilots, and full runs.
-- **Status:** Partly corrected. The active data job is healthy but is still connected. All later commands will be detached.
+- **Status:** Corrected. The slow connected job was stopped. Its replacement and all later long runs use detached mode.
 
 ### 141. Four parallel downloads and a four-hour limit were too risky
 
@@ -1273,3 +1273,11 @@ The following work is not complete:
 - **Simple explanation:** The model could start the correct action but be stopped before it finished. The evaluator would then mark it wrong.
 - **Correction:** Allow 128 new tokens. A tokenizer audit found zero targets above this limit. Short click actions still stop when their end token appears.
 - **Status:** Corrected before SFT. No SFT evaluation used the shorter limit.
+
+### 145. The SFT output did not identify its exact code and runtime
+
+- **Technical term:** Reproducibility manifest.
+- **Mistake:** The first SFT script saved model and data hashes but did not save training-code hashes, evaluation-code hashes, software versions, CUDA version, or GPU name.
+- **Simple explanation:** A later run could differ because its code or software changed, but the result would not show that change.
+- **Correction:** Save a runtime audit with both source hashes and the main software and GPU versions.
+- **Status:** Corrected before SFT. No SFT result was created without this audit.

@@ -6,6 +6,7 @@ from cua_jepa.train_sft import (
     SFTTrainConfig,
     action_prompt,
     find_last_subsequence,
+    runtime_audit,
     select_evaluation_records,
     trainable_state_sha256,
 )
@@ -68,3 +69,11 @@ def test_small_evaluation_set_balances_operating_systems() -> None:
     assert max(counts.values()) - min(counts.values()) <= 1
     assert selected == select_evaluation_records(records, limit=32, seed=7)
     assert select_evaluation_records(records, limit=100, seed=7) == records
+
+
+def test_runtime_audit_hashes_training_and_evaluation_code() -> None:
+    audit = runtime_audit()
+    assert audit["python"]
+    assert audit["torch"]
+    assert len(audit["training_code_sha256"]) == 64
+    assert len(audit["evaluation_code_sha256"]) == 64

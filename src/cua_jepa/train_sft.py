@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
+import platform
 import random
 import time
 from dataclasses import asdict, dataclass
@@ -78,6 +80,32 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def runtime_audit() -> dict[str, Any]:
+    def version(name: str) -> str | None:
+        try:
+            return importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            return None
+
+    return {
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "transformers": version("transformers"),
+        "peft": version("peft"),
+        "pillow": version("pillow"),
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None,
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "gpu_capability": (
+            list(torch.cuda.get_device_capability(0)) if torch.cuda.is_available() else None
+        ),
+        "training_code_sha256": sha256_file(Path(__file__)),
+        "evaluation_code_sha256": sha256_file(
+            Path(__file__).with_name("sft_eval.py")
+        ),
+    }
 
 
 def tensor_state_sha256(parameters: Iterable[tuple[str, torch.Tensor]]) -> str:
@@ -441,6 +469,7 @@ def train_policy_sft(
     if initialization["base_trainable_parameters"] != 0:
         raise RuntimeError("A non-LoRA base parameter is trainable")
     write_json(output_path / "config.json", asdict(config))
+    write_json(output_path / "runtime_audit.json", runtime_audit())
     write_json(output_path / "dataset_audit.json", dataset_audit)
     write_json(output_path / "initialization_audit.json", initialization)
     write_json(
