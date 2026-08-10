@@ -969,3 +969,19 @@ The following work is not complete:
 8. Measure observability overhead in a longer timing pilot.
 9. Complete and analyze the approved full Model 4 run.
 10. Replace the weak collapse stop rule before a later full run.
+
+### 107. Dense future prediction kept too much unchanged screen content
+
+- **Technical term:** Visual dominance and counterfactual centering.
+- **Mistake:** We kept changing the predictor size and screen view while the target still contained a large amount of common screen content.
+- **Simple explanation:** The four futures mostly show the same software screen. The small action effect can get lost inside the much larger common screen.
+- **Correction:** Add a pure JEPA target that subtracts the average of the four future representations. The remaining target shows what is different for each action. Use the union of all changed-screen masks for every branch.
+- **Status:** Implemented. All 63 local tests passed. A Modal smoke test and a controlled pilot are pending.
+
+### 108. The four action branches have an uneven action mix
+
+- **Technical term:** Action-type and branch-position imbalance.
+- **Mistake:** We did not measure how often each action type occurs in each branch position before we interpreted the total four-way score.
+- **Simple explanation:** In the 7,667 training bundles, branch 0 is a typing action 96.1% of the time. Branches 2 and 3 are clicks about 98% of the time. The total score can hide weak click learning.
+- **Correction:** Keep the per-action scores. Treat click accuracy as a key result. Add controls that shuffle the action and the current screen. Do not use the total score by itself.
+- **Status:** The full training split was measured. The current-screen shuffle control is implemented. A Modal test is pending.

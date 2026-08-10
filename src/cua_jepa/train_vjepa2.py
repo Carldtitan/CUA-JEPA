@@ -66,6 +66,7 @@ class VJEPA2PilotConfig:
     predictor_layers: int = 6
     predictor_heads: int = 8
     predictor_architecture: str = "adaln_spatial"
+    prediction_target_mode: str = "future_delta"
     screen_views: str = "letterbox"
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
@@ -189,6 +190,44 @@ def _predict_bundle_deltas(
         return predictor(current, embeddings, spatial)
     positions = bundle.screen_positions.to(device=device, dtype=torch.float32)
     return predictor(current, embeddings, spatial, positions)
+
+
+def action_prediction_targets(
+    current: torch.Tensor, targets: torch.Tensor, mode: str
+) -> torch.Tensor:
+    """Build the target that the action-conditioned predictor must match."""
+
+    if mode == "future_delta":
+        return latent_delta(current, targets)
+    if mode == "counterfactual_residual":
+        normalized = torch.nn.functional.normalize(targets.detach().float(), dim=-1)
+        return normalized - normalized.mean(dim=0, keepdim=True)
+    raise ValueError(f"Unknown V-JEPA 2 prediction target mode: {mode}")
+
+
+def prediction_space(
+    current: torch.Tensor,
+    targets: torch.Tensor,
+    predicted_changes: torch.Tensor,
+    mode: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return comparable student predictions and target-encoder representations."""
+
+    if mode == "future_delta":
+        return reconstruct_future_latent(current, predicted_changes), targets
+    if mode == "counterfactual_residual":
+        return predicted_changes, action_prediction_targets(current, targets, mode)
+    raise ValueError(f"Unknown V-JEPA 2 prediction target mode: {mode}")
+
+
+def prediction_target_weights(weights: torch.Tensor, mode: str) -> torch.Tensor:
+    """Use one union mask when every residual contains all branch differences."""
+
+    if mode == "future_delta":
+        return weights
+    if mode == "counterfactual_residual":
+        return weights.max(dim=0, keepdim=True).values.expand_as(weights)
+    raise ValueError(f"Unknown V-JEPA 2 prediction target mode: {mode}")
 
 
 def letterbox_gui_image(image: Image.Image, size: int = 256) -> Image.Image:
@@ -544,12 +583,14 @@ def evaluate_encoded_bundles(
     device: torch.device,
     max_bundles: int,
     seed: int,
+    prediction_target_mode: str = "future_delta",
 ) -> dict[str, Any]:
     selected = select_balanced_encoded_bundles(bundles, max_bundles)
     action_encoder.eval()
     predictor.eval()
     correct = 0
     shuffled_correct = 0
+    shuffled_current_correct = 0
     correct_distances: list[float] = []
     shuffled_distances: list[float] = []
     target_pair_distances: list[float] = []
@@ -563,7 +604,7 @@ def evaluate_encoded_bundles(
     records: list[dict[str, Any]] = []
     grid = torch.tensor([1, 32, 32])
     with torch.inference_mode():
-        for bundle in selected:
+        for bundle_index, bundle in enumerate(selected):
             current = bundle.current.to(device=device, dtype=torch.float32)
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
@@ -572,9 +613,34 @@ def evaluate_encoded_bundles(
             predicted_deltas = _predict_bundle_deltas(
                 predictor, current, embeddings, spatial, bundle, device
             )
-            predictions = reconstruct_future_latent(current, predicted_deltas)
-            shared_weights = weights.max(dim=0).values
-            normalized_targets = torch.nn.functional.normalize(targets.float(), dim=-1)
+            shuffled_current = selected[(bundle_index + 1) % len(selected)].current.to(
+                device=device, dtype=torch.float32
+            )
+            shuffled_current_deltas = _predict_bundle_deltas(
+                predictor,
+                shuffled_current,
+                embeddings,
+                spatial,
+                bundle,
+                device,
+            )
+            predictions, comparison_targets = prediction_space(
+                current,
+                targets,
+                predicted_deltas,
+                prediction_target_mode,
+            )
+            shuffled_current_predictions, _ = prediction_space(
+                current,
+                targets,
+                shuffled_current_deltas,
+                prediction_target_mode,
+            )
+            effective_weights = prediction_target_weights(weights, prediction_target_mode)
+            shared_weights = effective_weights.max(dim=0).values
+            normalized_targets = torch.nn.functional.normalize(
+                comparison_targets.float(), dim=-1
+            )
             normalized_predictions = torch.nn.functional.normalize(predictions.float(), dim=-1)
             target_variances.append(float(normalized_targets.var(dim=0).mean().item()))
             prediction_variances.append(float(normalized_predictions.var(dim=0).mean().item()))
@@ -583,7 +649,9 @@ def evaluate_encoded_bundles(
                     target_pair_distances.append(
                         float(
                             latent_prediction_loss(
-                                targets[first], targets[second], shared_weights
+                                comparison_targets[first],
+                                comparison_targets[second],
+                                shared_weights,
                             ).item()
                         )
                     )
@@ -599,7 +667,7 @@ def evaluate_encoded_bundles(
             for index, prediction in enumerate(predictions):
                 distances = [
                     float(latent_prediction_loss(prediction, target, shared_weights).item())
-                    for target in targets
+                    for target in comparison_targets
                 ]
                 predicted_index = min(range(4), key=distances.__getitem__)
                 is_correct = int(predicted_index == index)
@@ -611,12 +679,25 @@ def evaluate_encoded_bundles(
                     float(
                         latent_prediction_loss(shuffled_prediction, target, shared_weights).item()
                     )
-                    for target in targets
+                    for target in comparison_targets
                 ]
                 shuffled_index = min(range(4), key=shuffled_candidates.__getitem__)
                 shuffled_is_correct = int(shuffled_index == index)
                 shuffled_correct += shuffled_is_correct
                 shuffled_distances.append(shuffled_candidates[index])
+                wrong_screen_candidates = [
+                    float(
+                        latent_prediction_loss(
+                            shuffled_current_predictions[index], target, shared_weights
+                        ).item()
+                    )
+                    for target in comparison_targets
+                ]
+                wrong_screen_index = min(
+                    range(4), key=wrong_screen_candidates.__getitem__
+                )
+                wrong_screen_is_correct = int(wrong_screen_index == index)
+                shuffled_current_correct += wrong_screen_is_correct
                 action_kind = str(bundle.actions[index].get("kind", "unknown"))
                 changed = bundle.changed_pixel_fractions[index]
                 change_bucket = changed_pixel_bucket(changed)
@@ -638,6 +719,8 @@ def evaluate_encoded_bundles(
                         "predicted_target_branch_index": predicted_index,
                         "shuffled_correct": bool(shuffled_is_correct),
                         "shuffled_predicted_target_branch_index": shuffled_index,
+                        "shuffled_current_correct": bool(wrong_screen_is_correct),
+                        "shuffled_current_predicted_target_branch_index": wrong_screen_index,
                     }
                 )
             bundle_accuracies.append(bundle_correct / 4)
@@ -652,16 +735,20 @@ def evaluate_encoded_bundles(
     count = len(selected) * 4
     accuracy = correct / count
     shuffled_accuracy = shuffled_correct / count
+    shuffled_current_accuracy = shuffled_current_correct / count
     target_pair_mean = sum(target_pair_distances) / len(target_pair_distances)
     prediction_pair_mean = sum(prediction_pair_distances) / len(prediction_pair_distances)
     action_encoder.train()
     predictor.train()
     return {
         "bundles": len(selected),
+        "prediction_target_mode": prediction_target_mode,
         "four_way_accuracy": accuracy,
         "bundle_bootstrap_ci95": bundle_bootstrap_ci95(bundle_accuracies, seed),
         "shuffled_four_way_accuracy": shuffled_accuracy,
         "action_accuracy_drop": accuracy - shuffled_accuracy,
+        "shuffled_current_four_way_accuracy": shuffled_current_accuracy,
+        "current_screen_accuracy_drop": accuracy - shuffled_current_accuracy,
         "correct_action_distance": sum(correct_distances) / count,
         "shuffled_action_distance": sum(shuffled_distances) / count,
         "shuffled_minus_correct": (sum(shuffled_distances) - sum(correct_distances)) / count,
@@ -689,6 +776,10 @@ def pilot_success(metrics: dict[str, Any]) -> tuple[bool, dict[str, bool]]:
         "click_at_least_38_percent": click >= 0.38,
         "large_change_at_least_30_percent": large >= 0.30,
         "action_drop_at_least_10_points": metrics["action_accuracy_drop"] >= 0.10,
+        "current_screen_drop_at_least_5_points": metrics.get(
+            "current_screen_accuracy_drop", 0.0
+        )
+        >= 0.05,
         "every_app_at_least_30_percent": minimum_app >= 0.30,
         "ci_lower_bound_above_chance": metrics["bundle_bootstrap_ci95"][0] > 0.25,
     }
@@ -878,7 +969,13 @@ def train_vjepa2_gui_pilot(
 
     def evaluate(name: str, step: int, values, maximum: int) -> dict[str, Any]:
         result = evaluate_encoded_bundles(
-            values, action_encoder, predictor, device, maximum, config.seed + step
+            values,
+            action_encoder,
+            predictor,
+            device,
+            maximum,
+            config.seed + step,
+            config.prediction_target_mode,
         )
         records = result.pop("per_bundle_records")
         row = {"recorded_at_utc": utc_now(), "step": step, "evaluation": name, **result}
@@ -927,11 +1024,16 @@ def train_vjepa2_gui_pilot(
             predicted_deltas = _predict_bundle_deltas(
                 predictor, current, embeddings, spatial, bundle, device
             )
-            target_deltas = latent_delta(current, targets)
+            target_deltas = action_prediction_targets(
+                current, targets, config.prediction_target_mode
+            )
+            effective_weights = prediction_target_weights(
+                weights, config.prediction_target_mode
+            )
             changed_loss = latent_delta_loss(
                 predicted_deltas,
                 target_deltas,
-                weights,
+                effective_weights,
                 direction_weight=config.delta_direction_weight,
                 magnitude_weight=config.delta_magnitude_weight,
             )
@@ -945,12 +1047,19 @@ def train_vjepa2_gui_pilot(
                 config.changed_region_loss_weight * changed_loss
                 + config.global_loss_weight * global_loss
             )
-            regularizers = bundle_anti_collapse_losses(predicted_deltas, target_deltas, weights)
-            predictions = reconstruct_future_latent(current, predicted_deltas)
+            regularizers = bundle_anti_collapse_losses(
+                predicted_deltas, target_deltas, effective_weights
+            )
+            predictions, comparison_targets = prediction_space(
+                current,
+                targets,
+                predicted_deltas,
+                config.prediction_target_mode,
+            )
             separation_loss = action_separation_loss(
                 predictions,
-                targets,
-                weights,
+                comparison_targets,
+                effective_weights,
                 temperature=config.action_separation_temperature,
             )
             loss = (

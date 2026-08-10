@@ -374,6 +374,9 @@ def run_vjepa2_gui_pilot(
         "independent_tiled_smoke",
         "independent_tiled_separation",
         "independent_tiled_wide_separation",
+        "counterfactual_smoke",
+        "counterfactual_scaled_pure",
+        "counterfactual_scaled_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -386,6 +389,7 @@ def run_vjepa2_gui_pilot(
         "action_token_smoke",
         "tiled_smoke",
         "independent_tiled_smoke",
+        "counterfactual_smoke",
     }:
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -405,6 +409,9 @@ def run_vjepa2_gui_pilot(
         elif mode == "independent_tiled_smoke":
             config.screen_views = "two_tiles"
             config.predictor_architecture = "independent_tiled_adaln_spatial"
+        elif mode == "counterfactual_smoke":
+            config.prediction_target_mode = "counterfactual_residual"
+            config.action_separation_weight = 0.0
     elif mode == "pure":
         config.action_separation_weight = 0.0
     elif mode == "separation":
@@ -432,6 +439,11 @@ def run_vjepa2_gui_pilot(
             config.predictor_dim = 512
             config.predictor_layers = 8
             config.encoder_bundle_batch_size = 4
+        elif mode in {"counterfactual_scaled_pure", "counterfactual_scaled_separation"}:
+            config.prediction_target_mode = "counterfactual_residual"
+            config.action_separation_weight = (
+                0.0 if mode == "counterfactual_scaled_pure" else 0.25
+            )
 
     if mode in {
         "scaled_separation",
@@ -439,6 +451,8 @@ def run_vjepa2_gui_pilot(
         "tiled_separation",
         "independent_tiled_separation",
         "independent_tiled_wide_separation",
+        "counterfactual_scaled_pure",
+        "counterfactual_scaled_separation",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -530,6 +544,9 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_independent_tiled_smoke",
         "vjepa2_gui_independent_tiled_separation",
         "vjepa2_gui_independent_tiled_wide_separation",
+        "vjepa2_gui_counterfactual_smoke",
+        "vjepa2_gui_counterfactual_scaled_pure",
+        "vjepa2_gui_counterfactual_scaled_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

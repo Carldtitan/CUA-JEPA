@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw
 
 from cua_jepa.train_vjepa2 import (
     EncodedBundle,
+    action_prediction_targets,
     balanced_training_epoch,
     bundle_bootstrap_ci95,
     encoded_feature_cache_key,
@@ -12,6 +13,8 @@ from cua_jepa.train_vjepa2 import (
     letterbox_action_coordinates,
     letterbox_gui_image,
     pilot_success,
+    prediction_space,
+    prediction_target_weights,
     select_balanced_encoded_bundles,
     two_tile_action_coordinates,
     two_tile_gui_images,
@@ -125,6 +128,44 @@ def test_bundle_bootstrap_is_deterministic_and_bounded() -> None:
     assert 0.0 <= first[0] <= first[1] <= 1.0
 
 
+def test_counterfactual_targets_remove_common_future_content() -> None:
+    current = torch.randn(6, 8)
+    common_future = torch.randn(6, 8)
+    branch_changes = torch.randn(4, 6, 8) * 0.01
+    futures = common_future.unsqueeze(0) + branch_changes
+    residuals = action_prediction_targets(current, futures, "counterfactual_residual")
+    assert residuals.shape == futures.shape
+    assert torch.allclose(residuals.mean(dim=0), torch.zeros_like(current), atol=1e-6)
+    shifted = futures + torch.randn(6, 8).unsqueeze(0)
+    shifted_residuals = action_prediction_targets(
+        current, shifted, "counterfactual_residual"
+    )
+    # Normalization changes the exact values, but a common unnormalized copy path
+    # can no longer appear directly in the centered target.
+    assert torch.allclose(
+        shifted_residuals.mean(dim=0), torch.zeros_like(current), atol=1e-6
+    )
+
+
+def test_counterfactual_prediction_space_does_not_copy_current_screen() -> None:
+    current = torch.randn(6, 8)
+    futures = torch.randn(4, 6, 8)
+    predicted = torch.randn(4, 6, 8)
+    student, target = prediction_space(
+        current, futures, predicted, "counterfactual_residual"
+    )
+    assert student.data_ptr() == predicted.data_ptr()
+    assert torch.allclose(target.mean(dim=0), torch.zeros_like(current), atol=1e-6)
+
+
+def test_counterfactual_targets_use_one_union_change_mask() -> None:
+    weights = torch.tensor(
+        [[1.0, 0.05], [0.05, 1.0], [0.05, 0.05], [0.05, 0.05]]
+    )
+    effective = prediction_target_weights(weights, "counterfactual_residual")
+    assert torch.equal(effective, torch.ones_like(weights))
+
+
 def test_frozen_feature_cache_key_changes_with_screen_view() -> None:
     audit = {
         "train_tar_manifest": {"manifest_sha256": "train"},
@@ -153,6 +194,7 @@ def test_pilot_success_requires_each_difficult_group() -> None:
     metrics = {
         "four_way_accuracy": 0.45,
         "action_accuracy_drop": 0.15,
+        "current_screen_accuracy_drop": 0.08,
         "bundle_bootstrap_ci95": [0.35, 0.55],
         "by_app": {
             "jira": {"four_way_accuracy": 0.4},
