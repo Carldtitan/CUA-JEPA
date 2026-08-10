@@ -179,7 +179,15 @@ def runtime_manifest(
     config: Mapping[str, Any], run_metadata: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
     packages = {}
-    for name in ("accelerate", "numpy", "peft", "pillow", "torch", "transformers"):
+    for name in (
+        "accelerate",
+        "numpy",
+        "peft",
+        "pillow",
+        "torch",
+        "torchvision",
+        "transformers",
+    ):
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:

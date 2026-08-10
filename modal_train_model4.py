@@ -341,6 +341,99 @@ def run_model4_training(
     return metrics
 
 
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4,
+    memory=16_384,
+    timeout=75 * 60,
+    scaledown_window=60,
+    volumes={
+        "/training": output_volume,
+        "/root/.cache/huggingface": hf_cache_volume,
+        "/dataset": data_volume,
+    },
+)
+def run_vjepa2_gui_pilot(
+    mode: str = "smoke",
+    seed: int = 0,
+    git_commit: str = "unknown",
+    source_dataset_audit_sha256: str = "unknown",
+) -> dict:
+    from cua_jepa.train_vjepa2 import VJEPA2PilotConfig, train_vjepa2_gui_pilot
+
+    if mode not in {"smoke", "pilot"}:
+        raise ValueError("V-JEPA 2 mode must be 'smoke' or 'pilot'")
+    config = VJEPA2PilotConfig()
+    if seed:
+        config.seed = seed
+    if mode == "smoke":
+        config.max_steps = 2
+        config.max_train_transitions = 8
+        config.max_validation_transitions = 8
+        config.encoder_bundle_batch_size = 2
+        config.train_evaluation_bundles = 2
+        config.validation_evaluation_bundles = 2
+        config.evaluation_steps = (0, 1, 2)
+        config.log_every = 1
+        config.approved_cost_limit_usd = 0.50
+        config.max_runtime_seconds = 20 * 60
+
+    train_paths = [str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))]
+    validation_paths = [
+        str(path) for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
+    ]
+    if not train_paths:
+        raise RuntimeError("The Model 4 stage-2 training data is empty")
+    if len(validation_paths) != 20:
+        raise RuntimeError(f"Expected 20 full validation tar files, found {len(validation_paths)}")
+    if any("/test/" in path for path in train_paths + validation_paths):
+        raise RuntimeError("The test split entered a V-JEPA 2 training path")
+
+    seed_label = f"-seed{config.seed}"
+    run_id = datetime.now(timezone.utc).strftime(f"vjepa2-gui-{mode}{seed_label}-%Y%m%dT%H%M%SZ")
+    output_dir = Path("/training") / run_id
+    run_metadata = {
+        "run_id": run_id,
+        "run_mode": f"vjepa2_gui_{mode}",
+        "git_commit": git_commit,
+        "dataset_id": "clean-20260808-v7",
+        "source_dataset_audit_sha256": source_dataset_audit_sha256,
+        "modal_app_name": APP_NAME,
+        "modal_app_id": app.app_id or os.environ.get("MODAL_APP_ID"),
+        "modal_task_id": os.environ.get("MODAL_TASK_ID"),
+    }
+    try:
+        metrics = train_vjepa2_gui_pilot(
+            train_tar_paths=train_paths,
+            validation_tar_paths=validation_paths,
+            output_dir=output_dir,
+            config=config,
+            run_metadata=run_metadata,
+            persistence_callback=output_volume.commit,
+        )
+    except BaseException as error:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "stop_reason.json").write_text(
+            json.dumps(
+                {
+                    "reason": "exception",
+                    "exception_type": type(error).__name__,
+                    "message": str(error),
+                    "traceback": traceback.format_exc(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        output_volume.commit()
+        raise
+    metrics["run_id"] = run_id
+    metrics["modal_output_dir"] = str(output_dir)
+    print(json.dumps(metrics, indent=2), flush=True)
+    return metrics
+
+
 @app.local_entrypoint()
 def main(mode: str = "deps", seed: int = 0) -> None:
     if mode == "deps":
@@ -356,5 +449,15 @@ def main(mode: str = "deps", seed: int = 0) -> None:
     except (OSError, subprocess.CalledProcessError):
         git_commit = "unknown"
     source_dataset_audit_sha256 = hashlib.sha256(AUDIT_REPORT.read_bytes()).hexdigest()
+    if mode in {"vjepa2_gui_smoke", "vjepa2_gui_pilot"}:
+        vjepa2_mode = mode.removeprefix("vjepa2_gui_")
+        metrics = run_vjepa2_gui_pilot.remote(
+            vjepa2_mode,
+            seed,
+            git_commit,
+            source_dataset_audit_sha256,
+        )
+        print(json.dumps(metrics, indent=2))
+        return
     metrics = run_model4_training.remote(mode, seed, git_commit, source_dataset_audit_sha256)
     print(json.dumps(metrics, indent=2))

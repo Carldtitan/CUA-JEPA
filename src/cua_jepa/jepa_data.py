@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import tarfile
 from dataclasses import dataclass
@@ -31,6 +32,60 @@ class TransitionSample:
 def _decode_webp(value: bytes) -> Image.Image:
     with Image.open(io.BytesIO(value)) as image:
         return image.convert("RGB")
+
+
+def _image_hashes(samples: Iterable[TransitionSample]) -> set[str]:
+    hashes: set[str] = set()
+    for sample in samples:
+        hashes.add(hashlib.sha256(sample.current_webp).hexdigest())
+        hashes.add(hashlib.sha256(sample.future_webp).hexdigest())
+    return hashes
+
+
+def validate_dataset_assignments(
+    train_samples: list[TransitionSample],
+    validation_samples: list[TransitionSample],
+    expected_train_transitions: int = 0,
+    expected_validation_transitions: int = 0,
+) -> dict[str, Any]:
+    """Reject split mistakes and exact data leakage before training."""
+
+    train_splits = {sample.split for sample in train_samples}
+    validation_splits = {sample.split for sample in validation_samples}
+    if train_splits != {"train"}:
+        raise RuntimeError(f"Training data contains wrong splits: {sorted(train_splits)}")
+    if validation_splits != {"validation"}:
+        raise RuntimeError(f"Validation data contains wrong splits: {sorted(validation_splits)}")
+    if expected_train_transitions and len(train_samples) != expected_train_transitions:
+        raise RuntimeError(
+            f"Expected {expected_train_transitions} training transitions, "
+            f"loaded {len(train_samples)}"
+        )
+    if expected_validation_transitions and (
+        len(validation_samples) != expected_validation_transitions
+    ):
+        raise RuntimeError(
+            f"Expected {expected_validation_transitions} validation transitions, "
+            f"loaded {len(validation_samples)}"
+        )
+    train_bundles = {sample.bundle_id for sample in train_samples}
+    validation_bundles = {sample.bundle_id for sample in validation_samples}
+    bundle_overlap = train_bundles & validation_bundles
+    if bundle_overlap:
+        raise RuntimeError(f"Training and validation share {len(bundle_overlap)} bundle IDs")
+    image_overlap = _image_hashes(train_samples) & _image_hashes(validation_samples)
+    if image_overlap:
+        raise RuntimeError(f"Training and validation share {len(image_overlap)} exact screenshots")
+    return {
+        "train_split": "train",
+        "validation_split": "validation",
+        "train_transitions": len(train_samples),
+        "validation_transitions": len(validation_samples),
+        "train_bundles": len(train_bundles),
+        "validation_bundles": len(validation_bundles),
+        "bundle_overlap": 0,
+        "exact_screenshot_overlap": 0,
+    }
 
 
 def _read_member(archive: tarfile.TarFile, name: str) -> bytes:

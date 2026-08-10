@@ -79,6 +79,17 @@ def test_action_separation_prefers_matched_futures() -> None:
     assert matched < shuffled
 
 
+def test_action_separation_uses_one_shared_candidate_mask() -> None:
+    torch.manual_seed(11)
+    predictions = torch.randn(4, 2, 8)
+    targets = torch.randn(4, 2, 8)
+    candidate_specific = torch.tensor([[1.0, 0.05], [0.05, 1.0], [0.25, 0.75], [0.75, 0.25]])
+    union = candidate_specific.max(dim=0).values.expand_as(candidate_specific)
+    first = action_separation_loss(predictions, targets, candidate_specific)
+    second = action_separation_loss(predictions, targets, union)
+    assert torch.allclose(first, second)
+
+
 def test_delta_prediction_uses_change_not_complete_future() -> None:
     current = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
     future = torch.tensor([[0.0, 1.0, 0.0, 0.0]])

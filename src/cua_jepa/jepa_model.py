@@ -120,18 +120,14 @@ class ActionConditionedBlock(nn.Module):
         self.action_modulation = nn.Linear(action_dim, hidden_dim * 4)
 
     @staticmethod
-    def _modulate(
-        values: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor
-    ) -> torch.Tensor:
+    def _modulate(values: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
         return values * (1.0 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
     def forward(self, hidden: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         attention_scale, attention_shift, mlp_scale, mlp_shift = self.action_modulation(
             action
         ).chunk(4, dim=-1)
-        normalized = self._modulate(
-            self.norm_attention(hidden), attention_scale, attention_shift
-        )
+        normalized = self._modulate(self.norm_attention(hidden), attention_scale, attention_shift)
         attended, _ = self.attention(normalized, normalized, normalized, need_weights=False)
         hidden = hidden + attended
         normalized = self._modulate(self.norm_mlp(hidden), mlp_scale, mlp_shift)
@@ -199,9 +195,7 @@ def change_patch_weights(
     pooled_w = grid_w // 2
     difference = np.asarray(ImageChops.difference(current, future), dtype=np.uint8)
     changed = (difference.max(axis=2) > threshold).astype(np.uint8) * 255
-    mask = Image.fromarray(changed).resize(
-        (pooled_w, pooled_h), resample=Image.Resampling.BOX
-    )
+    mask = Image.fromarray(changed).resize((pooled_w, pooled_h), resample=Image.Resampling.BOX)
     values = torch.from_numpy(np.asarray(mask, dtype=np.float32).copy() / 255.0).flatten()
     values = (values >= changed_token_threshold).float()
     if t > 1:
@@ -235,9 +229,7 @@ def latent_delta(current: torch.Tensor, future: torch.Tensor) -> torch.Tensor:
     return future - current
 
 
-def reconstruct_future_latent(
-    current: torch.Tensor, predicted_delta: torch.Tensor
-) -> torch.Tensor:
+def reconstruct_future_latent(current: torch.Tensor, predicted_delta: torch.Tensor) -> torch.Tensor:
     """Add a predicted change to normalized current-screen tokens for evaluation."""
 
     current = F.normalize(current.detach().float(), dim=-1)
@@ -263,14 +255,10 @@ def latent_delta_loss(
         )
     target_magnitude = target_delta.norm(dim=-1)
     predicted_magnitude = predicted_delta.norm(dim=-1)
-    direction = 1.0 - F.cosine_similarity(
-        predicted_delta, target_delta, dim=-1, eps=1e-6
-    )
+    direction = 1.0 - F.cosine_similarity(predicted_delta, target_delta, dim=-1, eps=1e-6)
     # A direction is not meaningful when the target change is almost zero.
     direction = direction * (target_magnitude > 1e-5).float()
-    magnitude = F.smooth_l1_loss(
-        predicted_magnitude, target_magnitude, reduction="none"
-    )
+    magnitude = F.smooth_l1_loss(predicted_magnitude, target_magnitude, reduction="none")
     per_token = direction_weight * direction + magnitude_weight * magnitude
     if weights is None:
         return per_token.mean()
@@ -318,13 +306,10 @@ def bundle_anti_collapse_losses(
     for first in range(predicted.shape[0]):
         for second in range(first + 1, predicted.shape[0]):
             predicted_relations.append(
-                1.0 - F.cosine_similarity(
-                    predicted[first], predicted[second], dim=0, eps=1e-6
-                )
+                1.0 - F.cosine_similarity(predicted[first], predicted[second], dim=0, eps=1e-6)
             )
             target_relations.append(
-                1.0
-                - F.cosine_similarity(target[first], target[second], dim=0, eps=1e-6)
+                1.0 - F.cosine_similarity(target[first], target[second], dim=0, eps=1e-6)
             )
     predicted_relation = torch.stack(predicted_relations)
     target_relation = torch.stack(target_relations).detach()
@@ -354,14 +339,14 @@ def action_separation_loss(
         raise ValueError(
             f"Target weight shape mismatch: {target_weights.shape} vs {predictions.shape[:2]}"
         )
+    # Each candidate must use the same token weights. Candidate-specific weights
+    # can change the ranking even when the prediction is unchanged.
+    shared_weights = target_weights.max(dim=0).values
     rows: list[torch.Tensor] = []
     for prediction in predictions:
         rows.append(
             torch.stack(
-                [
-                    latent_prediction_loss(prediction, target, weights)
-                    for target, weights in zip(targets, target_weights, strict=True)
-                ]
+                [latent_prediction_loss(prediction, target, shared_weights) for target in targets]
             )
         )
     distances = torch.stack(rows)

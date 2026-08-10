@@ -773,6 +773,46 @@ The local source metrics are:
 - **Correction:** Add a compatible `torchvision` version to the training dependencies and Modal image.
 - **Status:** Corrected. The V-JEPA 2 encoder loaded and passed the first deterministic feature test.
 
+### 89. The balanced monitor used an unbalanced loaded pool
+
+- **Technical term:** Pre-sampling selection bias.
+- **Mistake:** The code balanced the monitor after a sequential file limit had already selected 75 Jira bundles and 50 Slack bundles.
+- **Simple explanation:** The final selection could not become equal because too few Slack bundles were loaded.
+- **Correction:** Load the complete application pool first. Then select complete bundles round-robin across applications.
+- **Status:** Corrected before V-JEPA 2 training. The balanced loader tests pass.
+
+### 90. The new V-JEPA 2 module kept unused imports
+
+- **Technical term:** Static-analysis failure.
+- **Mistake:** The first module draft imported `math` and `Counter` but did not use them.
+- **Simple explanation:** These imports did not change training, but they caused the code-quality check to fail.
+- **Correction:** Remove both unused imports before tests or GPU work.
+- **Status:** Corrected. The code-quality check passes.
+
+### 91. The V-JEPA 2 module imported the full Qwen trainer for one data check
+
+- **Technical term:** Unnecessary dependency coupling.
+- **Mistake:** The V-JEPA 2 module imported `train_jepa.py` only to use `validate_dataset_assignments`.
+- **Simple explanation:** This also loaded Qwen, PEFT, Transformers, and a broken local TensorFlow package during test collection.
+- **Correction:** Move the general data check to `jepa_data.py`. Import it from both training modules.
+- **Status:** Corrected. The full targeted regression test set passes.
+
+### 92. Candidate futures used different masks in the four-way test
+
+- **Technical term:** Candidate-dependent metric weighting.
+- **Mistake:** Each candidate future used its own changed-region mask during ranking and action-separation training.
+- **Simple explanation:** The distance rule changed for each answer. This could change the winner without better action prediction.
+- **Correction:** Use the union of all four changed-region masks for every candidate in the same bundle.
+- **Status:** Corrected before V-JEPA 2 training. The shared-mask regression test passes.
+
+### 93. The V-JEPA 2 training order did not balance applications
+
+- **Technical term:** Application sampling imbalance.
+- **Mistake:** One training epoch used all 488 bundles once. Application counts ranged from 40 to 75 bundles.
+- **Simple explanation:** Applications with more bundles would control more training updates.
+- **Correction:** Shuffle each application separately. Sample each application equally and repeat smaller application pools when needed.
+- **Status:** Corrected before V-JEPA 2 training. The balanced sampling regression test passes.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
