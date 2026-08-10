@@ -891,7 +891,15 @@ The local source metrics are:
 - **Mistake:** We expected more screen detail alone to improve click prediction. We used one attention path for all 512 visual tokens.
 - **Simple explanation:** The targets became easier to tell apart. The predictor still failed to reproduce enough of their differences.
 - **Correction:** Reject the first two-view method. Test each 256-token view with a separate prediction path that shares weights.
-- **Status:** The first method reached 36.0% overall and 35.2% on clicks. The old method reached 40.4% overall and 35.5% on clicks. The separate-view method is not yet tested.
+- **Status:** The first method reached 36.0% overall and 35.2% on clicks. The separate-view method reached 37.8% overall and 37.1% on clicks. The old method remains best overall at 40.4%.
+
+### 104. Predictor tests repeated the same frozen feature encoding
+
+- **Technical term:** Frozen-feature cache miss.
+- **Mistake:** Each predictor test ran the unchanged frozen V-JEPA 2 encoder on the same screens again.
+- **Simple explanation:** We paid for the same fixed calculation more than once.
+- **Correction:** Save frozen visual features with a data and encoder hash. Validate tensor counts and shapes before reuse.
+- **Status:** Corrected in code. Local cache tests pass. The first Modal cache build and reuse test are not yet complete.
 
 ## Current corrections in the training code
 

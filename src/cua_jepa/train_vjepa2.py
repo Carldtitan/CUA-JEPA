@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import random
 import time
@@ -92,6 +93,8 @@ class VJEPA2PilotConfig:
     cpu_cost_per_core_second: float = 0.0000131
     memory_gib: float = 16.0
     memory_cost_per_gib_second: float = 0.00000222
+    feature_cache_dir: str | None = None
+    feature_cache_version: int = 1
 
 
 @dataclass
@@ -107,6 +110,54 @@ class EncodedBundle:
     target_weights: torch.Tensor
     spatial_features: torch.Tensor | None = None
     screen_positions: torch.Tensor | None = None
+
+
+def encoded_feature_cache_key(
+    config: VJEPA2PilotConfig, dataset_audit: dict[str, Any]
+) -> str:
+    """Identify frozen features by data, encoder, view, and mask settings."""
+
+    values = {
+        "version": config.feature_cache_version,
+        "model_id": config.model_id,
+        "model_revision": config.model_revision,
+        "screen_views": config.screen_views,
+        "max_train_transitions": config.max_train_transitions,
+        "max_validation_transitions": config.max_validation_transitions,
+        "changed_patch_weight": config.changed_patch_weight,
+        "unchanged_patch_weight": config.unchanged_patch_weight,
+        "changed_token_threshold": config.changed_token_threshold,
+        "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
+        "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
+    }
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_encoded_feature_cache(
+    cached: dict[str, Any], key: str, config: VJEPA2PilotConfig
+) -> tuple[list[EncodedBundle], list[EncodedBundle]]:
+    if cached.get("cache_key") != key:
+        raise ValueError("Frozen feature cache key mismatch")
+    train = cached.get("train")
+    validation = cached.get("validation")
+    if not isinstance(train, list) or not isinstance(validation, list):
+        raise ValueError("Frozen feature cache has invalid bundle lists")
+    if len(train) * 4 != config.max_train_transitions:
+        raise ValueError("Frozen feature cache has the wrong training count")
+    if len(validation) * 4 != config.max_validation_transitions:
+        raise ValueError("Frozen feature cache has the wrong validation count")
+    expected_tokens = 512 if config.screen_views == "two_tiles" else 256
+    for name, bundles in (("train", train), ("validation", validation)):
+        if not all(
+            isinstance(bundle, EncodedBundle)
+            and bundle.current.shape == (expected_tokens, 1024)
+            and bundle.targets.shape == (4, expected_tokens, 1024)
+            and bundle.target_weights.shape == (4, expected_tokens)
+            for bundle in bundles
+        ):
+            raise ValueError(f"Frozen feature cache has invalid {name} tensor shapes")
+    return train, validation
 
 
 def _action_embedding(
@@ -730,28 +781,58 @@ def train_vjepa2_gui_pilot(
     manifest = runtime_manifest(asdict(config), run_metadata)
     manifest["encoder_frozen"] = True
     write_json(output / "run_manifest.json", manifest)
-    processor = AutoVideoProcessor.from_pretrained(config.model_id, revision=config.model_revision)
-    encoder = AutoModel.from_pretrained(
-        config.model_id,
-        revision=config.model_revision,
-        dtype=torch.bfloat16,
-    )
-    encoder.requires_grad_(False).eval().to(device)
-    if any(parameter.requires_grad for parameter in encoder.parameters()):
-        raise RuntimeError("The V-JEPA 2 encoder is not completely frozen")
-
     def report(value: dict[str, Any]) -> None:
         value = {"recorded_at_utc": utc_now(), **value}
         print(json.dumps(value, allow_nan=False), flush=True)
 
-    report({"event": "phase", "phase": "encode_train"})
-    encoded_train = encode_bundles(train_groups, processor, encoder, device, config, report)
-    report({"event": "phase", "phase": "encode_validation"})
-    encoded_validation = encode_bundles(
-        validation_groups, processor, encoder, device, config, report
+    cache_key = encoded_feature_cache_key(config, dataset_audit)
+    cache_path = (
+        Path(config.feature_cache_dir) / f"{cache_key}.pt"
+        if config.feature_cache_dir
+        else None
     )
+    cache_hit = bool(cache_path and cache_path.is_file())
+    if cache_hit:
+        report({"event": "feature_cache", "status": "load", "cache_key": cache_key})
+        cached = torch.load(cache_path, map_location="cpu", weights_only=False)
+        encoded_train, encoded_validation = validate_encoded_feature_cache(
+            cached, cache_key, config
+        )
+    else:
+        processor = AutoVideoProcessor.from_pretrained(
+            config.model_id, revision=config.model_revision
+        )
+        encoder = AutoModel.from_pretrained(
+            config.model_id,
+            revision=config.model_revision,
+            dtype=torch.bfloat16,
+        )
+        encoder.requires_grad_(False).eval().to(device)
+        if any(parameter.requires_grad for parameter in encoder.parameters()):
+            raise RuntimeError("The V-JEPA 2 encoder is not completely frozen")
+        report({"event": "phase", "phase": "encode_train"})
+        encoded_train = encode_bundles(train_groups, processor, encoder, device, config, report)
+        report({"event": "phase", "phase": "encode_validation"})
+        encoded_validation = encode_bundles(
+            validation_groups, processor, encoder, device, config, report
+        )
+        del encoder, processor
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_cache = cache_path.with_suffix(".incomplete")
+            torch.save(
+                {
+                    "cache_key": cache_key,
+                    "train": encoded_train,
+                    "validation": encoded_validation,
+                },
+                temporary_cache,
+            )
+            temporary_cache.replace(cache_path)
+            if persistence_callback is not None:
+                persistence_callback()
+            report({"event": "feature_cache", "status": "saved", "cache_key": cache_key})
     del train_groups, validation_groups, train_samples, validation_samples
-    del encoder, processor
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -977,6 +1058,8 @@ def train_vjepa2_gui_pilot(
         "encoder_frozen": True,
         "trainable_parameters": sum(parameter.numel() for parameter in trainable),
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
+        "feature_cache_hit": cache_hit,
+        "feature_cache_key": cache_key,
     }
     manifest["completed_at_utc"] = utc_now()
     manifest["completed_steps"] = step

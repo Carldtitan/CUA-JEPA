@@ -7,6 +7,7 @@ from cua_jepa.train_vjepa2 import (
     EncodedBundle,
     balanced_training_epoch,
     bundle_bootstrap_ci95,
+    encoded_feature_cache_key,
     gui_image_video,
     letterbox_action_coordinates,
     letterbox_gui_image,
@@ -16,6 +17,8 @@ from cua_jepa.train_vjepa2 import (
     two_tile_gui_images,
     two_tile_screen_positions,
     validate_vjepa2_pilot_artifacts,
+    validate_encoded_feature_cache,
+    VJEPA2PilotConfig,
 )
 
 
@@ -120,6 +123,30 @@ def test_bundle_bootstrap_is_deterministic_and_bounded() -> None:
     second = bundle_bootstrap_ci95([0.0, 0.25, 0.5, 1.0], seed=7, draws=200)
     assert first == second
     assert 0.0 <= first[0] <= first[1] <= 1.0
+
+
+def test_frozen_feature_cache_key_changes_with_screen_view() -> None:
+    audit = {
+        "train_tar_manifest": {"manifest_sha256": "train"},
+        "validation_tar_manifest": {"manifest_sha256": "validation"},
+    }
+    letterbox = VJEPA2PilotConfig(screen_views="letterbox")
+    tiles = VJEPA2PilotConfig(screen_views="two_tiles")
+    assert encoded_feature_cache_key(letterbox, audit) != encoded_feature_cache_key(tiles, audit)
+
+
+def test_frozen_feature_cache_validator_rejects_wrong_count() -> None:
+    config = VJEPA2PilotConfig(max_train_transitions=8, max_validation_transitions=8)
+    try:
+        validate_encoded_feature_cache(
+            {"cache_key": "key", "train": [_bundle("one", "jira")], "validation": []},
+            "key",
+            config,
+        )
+    except ValueError as error:
+        assert "count" in str(error).lower()
+    else:
+        raise AssertionError("An incomplete frozen feature cache was accepted")
 
 
 def test_pilot_success_requires_each_difficult_group() -> None:

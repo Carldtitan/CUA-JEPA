@@ -377,6 +377,7 @@ def run_vjepa2_gui_pilot(
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
     config.memory_gib = 24.0
+    config.feature_cache_dir = "/training/vjepa2-feature-cache"
     if seed:
         config.seed = seed
     if mode in {
