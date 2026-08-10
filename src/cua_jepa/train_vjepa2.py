@@ -17,6 +17,7 @@ from torch.nn.utils import clip_grad_norm_
 from cua_jepa.jepa_data import (
     TransitionSample,
     balanced_bundle_groups,
+    deterministic_same_app_holdout,
     load_transition_tars,
     validate_dataset_assignments,
 )
@@ -104,6 +105,7 @@ class VJEPA2PilotConfig:
     qwen_semantic_grid_size: int = 8
     qwen_feature_cache_dir: str | None = None
     qwen_feature_cache_version: int = 1
+    dataset_split_strategy: str = "app_disjoint"
 
 
 def fusion_gate_metrics(predictor: torch.nn.Module) -> dict[str, Any]:
@@ -158,6 +160,7 @@ def encoded_feature_cache_key(
         "changed_token_threshold": config.changed_token_threshold,
         "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
         "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
+        "dataset_split_strategy": config.dataset_split_strategy,
     }
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -201,6 +204,7 @@ def qwen_feature_cache_key(
         "max_validation_transitions": config.max_validation_transitions,
         "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
         "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
+        "dataset_split_strategy": config.dataset_split_strategy,
     }
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -996,22 +1000,43 @@ def train_vjepa2_gui_pilot(
     write_json(output / "config.json", asdict(config))
     if config.max_train_transitions % 4 or config.max_validation_transitions % 4:
         raise ValueError("Transition limits must contain complete four-branch bundles")
+    if config.dataset_split_strategy not in {"app_disjoint", "same_app_holdout"}:
+        raise ValueError(f"Unknown dataset split strategy: {config.dataset_split_strategy}")
     all_train_samples = load_transition_tars(train_tar_paths)
-    all_validation_samples = load_transition_tars(validation_tar_paths)
-    train_groups = balanced_bundle_groups(all_train_samples, config.max_train_transitions // 4)
-    validation_groups = balanced_bundle_groups(
-        all_validation_samples, config.max_validation_transitions // 4
-    )
+    if config.dataset_split_strategy == "same_app_holdout":
+        train_groups, validation_groups = deterministic_same_app_holdout(
+            all_train_samples,
+            config.max_train_transitions // 4,
+            config.max_validation_transitions // 4,
+            config.seed,
+        )
+        all_validation_samples: list[TransitionSample] = []
+        validation_source_split = "train"
+    else:
+        all_validation_samples = load_transition_tars(validation_tar_paths)
+        train_groups = balanced_bundle_groups(
+            all_train_samples, config.max_train_transitions // 4
+        )
+        validation_groups = balanced_bundle_groups(
+            all_validation_samples, config.max_validation_transitions // 4
+        )
+        validation_source_split = "validation"
     train_samples = [sample for branches in train_groups for sample in branches]
     validation_samples = [sample for branches in validation_groups for sample in branches]
     del all_train_samples, all_validation_samples
-    assignment_audit = validate_dataset_assignments(train_samples, validation_samples)
+    assignment_audit = validate_dataset_assignments(
+        train_samples,
+        validation_samples,
+        expected_train_split="train",
+        expected_validation_split=validation_source_split,
+    )
     dataset_audit = {
         **assignment_audit,
         "train": dataset_profile(train_samples),
         "validation": dataset_profile(validation_samples),
         "train_tar_manifest": tar_file_manifest(train_tar_paths, "train"),
         "validation_tar_manifest": tar_file_manifest(validation_tar_paths, "validation"),
+        "split_strategy": config.dataset_split_strategy,
     }
     write_json(output / "dataset_audit.json", dataset_audit)
     if len(train_groups) * 4 != len(train_samples):

@@ -181,6 +181,18 @@ def test_frozen_feature_cache_key_changes_with_screen_view() -> None:
     assert encoded_feature_cache_key(letterbox, audit) != encoded_feature_cache_key(tiles, audit)
 
 
+def test_frozen_feature_cache_key_changes_with_split_strategy() -> None:
+    audit = {
+        "train_tar_manifest": {"manifest_sha256": "train"},
+        "validation_tar_manifest": {"manifest_sha256": "validation"},
+    }
+    app_disjoint = VJEPA2PilotConfig(dataset_split_strategy="app_disjoint")
+    same_app = VJEPA2PilotConfig(dataset_split_strategy="same_app_holdout")
+    assert encoded_feature_cache_key(app_disjoint, audit) != encoded_feature_cache_key(
+        same_app, audit
+    )
+
+
 def test_qwen_feature_cache_key_changes_with_semantic_grid() -> None:
     audit = {
         "train_tar_manifest": {"manifest_sha256": "train"},

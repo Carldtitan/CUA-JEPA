@@ -3,6 +3,7 @@ from pathlib import Path
 from cua_jepa.jepa_data import (
     TransitionSample,
     balanced_bundle_groups,
+    deterministic_same_app_holdout,
     group_by_bundle,
     load_transition_tar,
 )
@@ -46,6 +47,19 @@ def _sample(bundle: str, app: str, branch: int) -> TransitionSample:
     )
 
 
+def _unique_sample(bundle: str, app: str, branch: int) -> TransitionSample:
+    return TransitionSample(
+        bundle_id=bundle,
+        app=app,
+        split="train",
+        branch_index=branch,
+        action={"kind": "click"},
+        current_webp=f"current-{bundle}".encode(),
+        future_webp=f"future-{bundle}-{branch}".encode(),
+        changed_pixel_fraction=0.1,
+    )
+
+
 def test_balanced_bundle_groups_round_robins_applications() -> None:
     samples = [
         _sample(bundle, app, branch)
@@ -68,3 +82,24 @@ def test_balanced_bundle_groups_returns_all_when_unlimited() -> None:
         _sample("slack-0", "slack", branch) for branch in range(4)
     ]
     assert len(balanced_bundle_groups(samples, max_bundles=0)) == 2
+
+
+def test_same_app_holdout_is_balanced_disjoint_and_deterministic() -> None:
+    samples = [
+        _unique_sample(f"{app}-{index}", app, branch)
+        for app in ("github", "gmail")
+        for index in range(5)
+        for branch in range(4)
+    ]
+    first_train, first_validation = deterministic_same_app_holdout(samples, 4, 2, seed=7)
+    second_train, second_validation = deterministic_same_app_holdout(samples, 4, 2, seed=7)
+    assert [group[0].bundle_id for group in first_train] == [
+        group[0].bundle_id for group in second_train
+    ]
+    assert [group[0].bundle_id for group in first_validation] == [
+        group[0].bundle_id for group in second_validation
+    ]
+    assert {group[0].app for group in first_validation} == {"github", "gmail"}
+    assert {group[0].bundle_id for group in first_train}.isdisjoint(
+        {group[0].bundle_id for group in first_validation}
+    )

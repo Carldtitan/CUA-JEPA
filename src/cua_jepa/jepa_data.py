@@ -47,14 +47,16 @@ def validate_dataset_assignments(
     validation_samples: list[TransitionSample],
     expected_train_transitions: int = 0,
     expected_validation_transitions: int = 0,
+    expected_train_split: str = "train",
+    expected_validation_split: str = "validation",
 ) -> dict[str, Any]:
     """Reject split mistakes and exact data leakage before training."""
 
     train_splits = {sample.split for sample in train_samples}
     validation_splits = {sample.split for sample in validation_samples}
-    if train_splits != {"train"}:
+    if train_splits != {expected_train_split}:
         raise RuntimeError(f"Training data contains wrong splits: {sorted(train_splits)}")
-    if validation_splits != {"validation"}:
+    if validation_splits != {expected_validation_split}:
         raise RuntimeError(f"Validation data contains wrong splits: {sorted(validation_splits)}")
     if expected_train_transitions and len(train_samples) != expected_train_transitions:
         raise RuntimeError(
@@ -77,8 +79,8 @@ def validate_dataset_assignments(
     if image_overlap:
         raise RuntimeError(f"Training and validation share {len(image_overlap)} exact screenshots")
     return {
-        "train_split": "train",
-        "validation_split": "validation",
+        "train_split": expected_train_split,
+        "validation_split": expected_validation_split,
         "train_transitions": len(train_samples),
         "validation_transitions": len(validation_samples),
         "train_bundles": len(train_bundles),
@@ -182,3 +184,47 @@ def balanced_bundle_groups(
         if not added:
             break
     return selected
+
+
+def deterministic_same_app_holdout(
+    samples: Iterable[TransitionSample],
+    max_train_bundles: int,
+    max_validation_bundles: int,
+    seed: int,
+) -> tuple[list[list[TransitionSample]], list[list[TransitionSample]]]:
+    """Create disjoint training and validation bundles from the same applications."""
+
+    complete = [branches for branches in group_by_bundle(samples).values() if len(branches) == 4]
+    by_app: dict[str, list[list[TransitionSample]]] = {}
+    for branches in complete:
+        by_app.setdefault(branches[0].app, []).append(branches)
+    for app, groups in by_app.items():
+        groups.sort(
+            key=lambda branches: hashlib.sha256(
+                f"{seed}:{app}:{branches[0].bundle_id}".encode("utf-8")
+            ).digest()
+        )
+
+    ordered = [
+        sample
+        for app in sorted(by_app)
+        for branches in by_app[app]
+        for sample in branches
+    ]
+    validation = balanced_bundle_groups(ordered, max_validation_bundles)
+    validation_ids = {branches[0].bundle_id for branches in validation}
+    validation_images = _image_hashes(sample for branches in validation for sample in branches)
+    remaining: list[TransitionSample] = []
+    for branches in complete:
+        if branches[0].bundle_id in validation_ids:
+            continue
+        branch_images = _image_hashes(branches)
+        if branch_images & validation_images:
+            continue
+        remaining.extend(branches)
+    train = balanced_bundle_groups(remaining, max_train_bundles)
+    if len(train) != max_train_bundles or len(validation) != max_validation_bundles:
+        raise RuntimeError(
+            "The same-app holdout does not contain enough disjoint complete bundles"
+        )
+    return train, validation

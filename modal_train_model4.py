@@ -382,6 +382,8 @@ def run_vjepa2_gui_pilot(
         "counterfactual_gated_scaled_separation",
         "qwen_fusion_smoke",
         "qwen_fusion_scaled_separation",
+        "same_app_smoke",
+        "scaled_same_app_diagnostic",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
@@ -398,6 +400,7 @@ def run_vjepa2_gui_pilot(
         "counterfactual_smoke",
         "counterfactual_gated_smoke",
         "qwen_fusion_smoke",
+        "same_app_smoke",
     }:
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -428,6 +431,8 @@ def run_vjepa2_gui_pilot(
             config.use_qwen_semantic_features = True
             config.predictor_architecture = "qwen_vjepa_fusion"
             config.action_separation_weight = 0.25
+        elif mode == "same_app_smoke":
+            config.dataset_split_strategy = "same_app_holdout"
     elif mode == "pure":
         config.action_separation_weight = 0.0
     elif mode == "separation":
@@ -473,6 +478,8 @@ def run_vjepa2_gui_pilot(
             config.use_qwen_semantic_features = True
             config.predictor_architecture = "qwen_vjepa_fusion"
             config.action_separation_weight = 0.25
+        elif mode == "scaled_same_app_diagnostic":
+            config.dataset_split_strategy = "same_app_holdout"
 
     if mode in {
         "scaled_separation",
@@ -485,6 +492,8 @@ def run_vjepa2_gui_pilot(
         "counterfactual_gated_scaled_pure",
         "counterfactual_gated_scaled_separation",
         "qwen_fusion_scaled_separation",
+        "same_app_smoke",
+        "scaled_same_app_diagnostic",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -495,12 +504,15 @@ def run_vjepa2_gui_pilot(
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
         ]
-    validation_paths = [
-        str(path) for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
-    ]
+    if config.dataset_split_strategy == "same_app_holdout":
+        validation_paths = list(train_paths)
+    else:
+        validation_paths = [
+            str(path) for path in sorted(Path("/dataset/model4-full/validation").rglob("*.tar"))
+        ]
     if not train_paths:
         raise RuntimeError("The Model 4 stage-2 training data is empty")
-    if len(validation_paths) != 20:
+    if config.dataset_split_strategy == "app_disjoint" and len(validation_paths) != 20:
         raise RuntimeError(f"Expected 20 full validation tar files, found {len(validation_paths)}")
     if any("/test/" in path for path in train_paths + validation_paths):
         raise RuntimeError("The test split entered a V-JEPA 2 training path")
@@ -584,6 +596,8 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_counterfactual_gated_scaled_separation",
         "vjepa2_gui_qwen_fusion_smoke",
         "vjepa2_gui_qwen_fusion_scaled_separation",
+        "vjepa2_gui_same_app_smoke",
+        "vjepa2_gui_scaled_same_app_diagnostic",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

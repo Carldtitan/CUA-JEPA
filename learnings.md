@@ -1033,3 +1033,19 @@ The following work is not complete:
 - **Simple explanation:** The score did not improve. We could not immediately tell if the model ignored Qwen.
 - **Correction:** Record the fusion-gate gradient and the effective gate size during training. Save the final values with the other metrics.
 - **Status:** Corrected. The saved run was inspected. Its raw gate L2 norm was 0.163. Each of the six layers had a nonzero gate. New runs now record this information automatically.
+
+### 115. Unseen applications can hide what the predictor learned
+
+- **Technical term:** In-domain and out-of-domain validation.
+- **Mistake:** We used only Jira and Slack for validation. The model trained on eight different applications. A low score can mean weak action learning, weak transfer to new software, or both.
+- **Simple explanation:** The test changed the software and the action result at the same time. We could not tell which change caused the error.
+- **Correction:** Keep Jira and Slack as the main unseen-application validation. Add a separate diagnostic that holds out complete bundles from the eight training applications. Use no shared bundle IDs or exact screenshots.
+- **Status:** Implemented in code. All 70 local tests pass. Modal smoke and scaled tests are pending.
+
+### 116. The first same-app selector passed nested bundle lists
+
+- **Technical term:** Data-structure shape mismatch.
+- **Mistake:** The selector passed a list of four-branch bundle lists into a function that accepts a flat list of transitions.
+- **Simple explanation:** The function received boxes of records when it expected records.
+- **Correction:** Flatten the bundle lists before balanced selection. Keep a unit test that checks a deterministic and disjoint result.
+- **Status:** Corrected before any Modal run. No GPU time or data was affected.
