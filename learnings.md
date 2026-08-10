@@ -1361,3 +1361,11 @@ The following work is not complete:
 - **Simple explanation:** The saved report would describe a loss that Model 3 did not use.
 - **Correction:** Build the objective label from the saved action-separation weight. Model 3 must report latent regression, anti-collapse regularization, and fixed `NO_ACTION` input.
 - **Status:** Corrected before Model 3 SFT. The new JEPA full run is not affected because this text belongs to the later SFT audit.
+
+### 156. A failed test command did not stop the commit command
+
+- **Technical term:** Native-command failure propagation.
+- **Mistake:** A broad text patch changed the Model 4 and Model 3 test weights in the wrong direction. PowerShell then ran the commit and push commands after `pytest` failed.
+- **Simple explanation:** The test failed, but the shell continued and pushed the bad test fixture.
+- **Correction:** Fix the two test weights. Run tests in a separate command before commits. For combined PowerShell commands, enable native-command error stopping.
+- **Status:** The test fixtures are corrected in the next commit. The training code and active Model 3 run were not affected.
