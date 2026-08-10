@@ -30,6 +30,8 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
     audit4 = _read_json(model4_dir / "dataset_audit.json")
     init2 = _read_json(model2_dir / "initialization_audit.json")
     init4 = _read_json(model4_dir / "initialization_audit.json")
+    runtime2 = _read_json(model2_dir / "runtime_audit.json")
+    runtime4 = _read_json(model4_dir / "runtime_audit.json")
     validation2 = _read_json(model2_dir / "validation_example_ids.json")
     validation4 = _read_json(model4_dir / "validation_example_ids.json")
     order2 = _read_json(model2_dir / "training_order.json")
@@ -37,6 +39,7 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
 
     checks = {
         "same_config": config2 == config4,
+        "same_runtime": runtime2 == runtime4,
         "same_dataset_sha256": audit2.get("dataset_sha256") == audit4.get("dataset_sha256"),
         "same_validation_ids": validation2 == validation4,
         "same_training_order": order2 == order4,
@@ -67,6 +70,8 @@ def audit_controlled_run_pair(model2_dir: str | Path, model4_dir: str | Path) ->
         "validation_examples": len(validation2),
         "training_examples": len(order2),
         "model4_jepa_adapter_sha256": init4.get("source_jepa_adapter_sha256"),
+        "training_code_sha256": runtime2.get("training_code_sha256"),
+        "evaluation_code_sha256": runtime2.get("evaluation_code_sha256"),
     }
 
 

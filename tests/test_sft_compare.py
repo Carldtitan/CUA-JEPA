@@ -43,6 +43,11 @@ def test_controlled_pair_audit_checks_all_initial_conditions(tmp_path) -> None:
         "dataset_audit.json": {"dataset_sha256": "data"},
         "validation_example_ids.json": ["v1"],
         "training_order.json": [{"example_id": "t1"}],
+        "runtime_audit.json": {
+            "training_code_sha256": "train-code",
+            "evaluation_code_sha256": "eval-code",
+            "gpu_name": "L4",
+        },
     }
     for name, value in common_files.items():
         _write_json(model2 / name, value)
