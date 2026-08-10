@@ -223,6 +223,39 @@ def latent_prediction_loss(
     return (per_token * weights).sum() / weights.sum().clamp_min(1.0)
 
 
+def action_separation_loss(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    target_weights: torch.Tensor,
+    temperature: float = 0.1,
+) -> torch.Tensor:
+    """Make each action prediction prefer its paired future over other bundle futures."""
+
+    if predictions.ndim != 3 or predictions.shape != targets.shape:
+        raise ValueError(
+            f"Prediction and target shapes must match [B, N, D]: "
+            f"{predictions.shape} vs {targets.shape}"
+        )
+    if target_weights.shape != predictions.shape[:2]:
+        raise ValueError(
+            f"Target weight shape mismatch: {target_weights.shape} vs {predictions.shape[:2]}"
+        )
+    rows: list[torch.Tensor] = []
+    for prediction in predictions:
+        rows.append(
+            torch.stack(
+                [
+                    latent_prediction_loss(prediction, target, weights)
+                    for target, weights in zip(targets, target_weights, strict=True)
+                ]
+            )
+        )
+    distances = torch.stack(rows)
+    labels = torch.arange(predictions.shape[0], device=predictions.device)
+    logits = -distances / temperature
+    return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels))
+
+
 @torch.no_grad()
 def mean_latent_distance(prediction: torch.Tensor, target: torch.Tensor) -> float:
     return float(latent_prediction_loss(prediction, target).item())

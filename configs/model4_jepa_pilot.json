@@ -6,11 +6,12 @@
   "lora_rank": 8,
   "lora_alpha": 16,
   "predictor_dim": 384,
-  "predictor_layers": 2,
+  "predictor_layers": 6,
   "predictor_heads": 8,
   "learning_rate": 0.0002,
   "weight_decay": 0.01,
   "ema_decay": 0.996,
+  "freeze_online_encoder": true,
   "freeze_target_encoder": true,
   "changed_patch_weight": 1.0,
   "unchanged_patch_weight": 0.05,
@@ -21,5 +22,7 @@
   "max_validation_transitions": 100,
   "evaluation_bundles": 8,
   "validation_evaluation_bundles": 0,
+  "action_separation_weight": 0.0,
+  "action_separation_temperature": 0.1,
   "log_every": 5
 }

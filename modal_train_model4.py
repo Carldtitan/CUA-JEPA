@@ -155,13 +155,23 @@ def run_model4_pilot(mode: str = "smoke") -> dict:
         config.evaluation_bundles = 8
         config.validation_evaluation_bundles = 0
         config.log_every = 10
+    elif mode in {"pure", "separation"}:
+        config.max_steps = 500
+        config.max_train_transitions = 2_000
+        config.max_validation_transitions = 500
+        config.evaluation_bundles = 25
+        config.validation_evaluation_bundles = 0
+        config.action_separation_weight = 0.0 if mode == "pure" else 0.25
+        config.log_every = 25
     elif mode != "pilot":
-        raise ValueError("mode must be 'smoke', 'pilot', 'quick', or 'stage2'")
+        raise ValueError(
+            "mode must be 'smoke', 'pilot', 'quick', 'pure', 'separation', or 'stage2'"
+        )
     run_id = datetime.now(timezone.utc).strftime(f"model4-{mode}-%Y%m%dT%H%M%SZ")
     output_dir = Path("/training") / run_id
     train_paths = ["/opt/cua-jepa/train.tar"]
     validation_paths = ["/opt/cua-jepa/validation.tar"]
-    if mode in {"quick", "stage2"}:
+    if mode in {"quick", "pure", "separation", "stage2"}:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-stage2/train").glob("*.tar"))
         ]

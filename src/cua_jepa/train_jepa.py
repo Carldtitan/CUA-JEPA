@@ -16,6 +16,7 @@ from cua_jepa.jepa_data import TransitionSample, group_by_bundle, load_transitio
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
     change_patch_weights,
@@ -37,6 +38,7 @@ class JEPATrainConfig:
     learning_rate: float = 0.0002
     weight_decay: float = 0.01
     ema_decay: float = 0.996
+    freeze_online_encoder: bool = True
     freeze_target_encoder: bool = True
     changed_patch_weight: float = 1.0
     unchanged_patch_weight: float = 0.05
@@ -47,6 +49,8 @@ class JEPATrainConfig:
     max_validation_transitions: int = 100
     evaluation_bundles: int = 8
     validation_evaluation_bundles: int = 0
+    action_separation_weight: float = 0.0
+    action_separation_temperature: float = 0.1
     log_every: int = 5
 
     @classmethod
@@ -68,7 +72,16 @@ def copy_online_adapter_to_target(model: torch.nn.Module, decay: float = 0.0) ->
 
 
 def _set_adapter(model: torch.nn.Module, name: str) -> None:
-    model.set_adapter(name)
+    if getattr(model, "peft_config", None):
+        model.set_adapter(name)
+
+
+def _vision_config(vision: torch.nn.Module):
+    base_model = getattr(vision, "base_model", None)
+    wrapped_model = getattr(base_model, "model", None)
+    if wrapped_model is not None and hasattr(wrapped_model, "config"):
+        return wrapped_model.config
+    return vision.config
 
 
 def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
@@ -88,6 +101,11 @@ def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
     gc.collect()
     vision.to(device)
 
+    if config.freeze_online_encoder:
+        vision.requires_grad_(False)
+        vision.eval()
+        return processor, vision
+
     lora = LoraConfig(
         r=config.lora_rank,
         lora_alpha=config.lora_alpha,
@@ -102,28 +120,13 @@ def _load_qwen_vision(config: JEPATrainConfig, device: torch.device):
     return processor, vision
 
 
-def _prepare_images(processor, current, future, device: torch.device):
-    inputs = processor(images=[current, future], return_tensors="pt")
-    grids = inputs["image_grid_thw"].to(device)
-    pixels = inputs["pixel_values"].to(device)
-    counts = [int(grid.prod().item()) for grid in grids]
-    if len(counts) != 2 or sum(counts) != pixels.shape[0]:
-        raise RuntimeError(f"Unexpected Qwen image packing: counts={counts}, pixels={pixels.shape}")
-    return (
-        pixels[: counts[0]],
-        grids[:1],
-        pixels[counts[0] :],
-        grids[1:],
-    )
-
-
 def _encode(vision, adapter: str, pixels: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
     _set_adapter(vision, adapter)
     output = vision(pixels, grid_thw=grid, return_dict=True)
     if hasattr(output, "pooler_output") and torch.is_tensor(output.pooler_output):
         return output.pooler_output
     if isinstance(output, tuple):
-        expected_dim = int(vision.base_model.model.config.out_hidden_size)
+        expected_dim = int(_vision_config(vision).out_hidden_size)
         candidates = [
             value
             for value in output
@@ -249,7 +252,10 @@ def evaluate_action_sensitivity(
                 )
             )
     _set_adapter(vision, "online")
-    vision.train()
+    if any(parameter.requires_grad for parameter in vision.parameters()):
+        vision.train()
+    else:
+        vision.eval()
     action_encoder.train()
     predictor.train()
     count = len(groups) * 4
@@ -293,10 +299,15 @@ def train_model4_jepa(
     )
     if not train_samples or not validation_samples:
         raise RuntimeError("Both training and validation transitions are required")
+    train_bundles = [
+        branches for branches in group_by_bundle(train_samples).values() if len(branches) == 4
+    ]
+    if not train_bundles:
+        raise RuntimeError("Training requires complete four-branch bundles")
 
     started = time.perf_counter()
     processor, vision = _load_qwen_vision(config, device)
-    latent_dim = int(vision.base_model.model.config.out_hidden_size)
+    latent_dim = int(_vision_config(vision).out_hidden_size)
     action_encoder = ActionEncoder(output_dim=config.predictor_dim).to(device)
     predictor = ActionConditionedPredictor(
         latent_dim=latent_dim,
@@ -311,7 +322,7 @@ def train_model4_jepa(
         for name, parameter in vision.named_parameters()
         if ".online." in name and parameter.requires_grad
     ]
-    if not online_parameters:
+    if not config.freeze_online_encoder and not online_parameters:
         raise RuntimeError("No trainable Qwen online vision LoRA parameters were found")
     head_parameters = list(action_encoder.parameters()) + list(predictor.parameters())
     trainable = online_parameters + head_parameters
@@ -341,46 +352,85 @@ def train_model4_jepa(
 
     step = 0
     losses: list[float] = []
+    regression_losses: list[float] = []
+    separation_losses: list[float] = []
     log_path = output_path / "train.jsonl"
     while step < config.max_steps:
-        epoch_samples = list(train_samples)
-        random.Random(config.seed + step).shuffle(epoch_samples)
-        for sample in epoch_samples:
-            current = sample.current_image()
-            future = sample.future_image()
-            current_pixels, current_grid, future_pixels, future_grid = _prepare_images(
-                processor, current, future, device
-            )
-            current_tokens = _encode(vision, "online", current_pixels, current_grid)
+        epoch_bundles = list(train_bundles)
+        random.Random(config.seed + step).shuffle(epoch_bundles)
+        for branches in epoch_bundles:
+            current = branches[0].current_image()
+            current_inputs = processor(images=[current], return_tensors="pt")
+            current_grid = current_inputs["image_grid_thw"].to(device)
+            current_pixels = current_inputs["pixel_values"].to(device)
+            if config.freeze_online_encoder:
+                with torch.no_grad():
+                    current_tokens = _encode(vision, "online", current_pixels, current_grid)
+            else:
+                current_tokens = _encode(vision, "online", current_pixels, current_grid)
+            future_tokens: list[torch.Tensor] = []
+            weights: list[torch.Tensor] = []
             with torch.no_grad():
-                future_tokens = _encode(vision, "target", future_pixels, future_grid)
+                for branch in branches:
+                    future = branch.future_image()
+                    future_inputs = processor(images=[future], return_tensors="pt")
+                    future_grid = future_inputs["image_grid_thw"].to(device)
+                    future_tokens.append(
+                        _encode(
+                            vision,
+                            "target",
+                            future_inputs["pixel_values"].to(device),
+                            future_grid,
+                        )
+                    )
+                    weights.append(
+                        change_patch_weights(
+                            current,
+                            future,
+                            future_grid[0],
+                            device,
+                            changed_weight=config.changed_patch_weight,
+                            unchanged_weight=config.unchanged_patch_weight,
+                            changed_token_threshold=config.changed_token_threshold,
+                        )
+                    )
             _set_adapter(vision, "online")
-            action = _action_embedding(action_encoder, [sample.action], device)
-            spatial_action = action_spatial_features([sample.action], current_grid[0], device)
-            prediction = predictor(current_tokens, action, spatial_action)
-            weights = change_patch_weights(
-                current,
-                future,
-                current_grid[0],
-                device,
-                changed_weight=config.changed_patch_weight,
-                unchanged_weight=config.unchanged_patch_weight,
-                changed_token_threshold=config.changed_token_threshold,
+            actions = [branch.action for branch in branches]
+            action_embeddings = _action_embedding(action_encoder, actions, device)
+            spatial_actions = action_spatial_features(actions, current_grid[0], device)
+            predictions = predictor(current_tokens, action_embeddings, spatial_actions)
+            targets = torch.stack(future_tokens)
+            target_weights = torch.stack(weights)
+            regression_loss = latent_prediction_loss(
+                predictions, targets, target_weights
             )
-            loss = latent_prediction_loss(prediction, future_tokens, weights)
+            if config.action_separation_weight > 0:
+                separation_loss = action_separation_loss(
+                    predictions,
+                    targets,
+                    target_weights,
+                    temperature=config.action_separation_temperature,
+                )
+            else:
+                separation_loss = regression_loss.new_zeros(())
+            loss = regression_loss + config.action_separation_weight * separation_loss
             (loss / config.gradient_accumulation_steps).backward()
             losses.append(float(loss.detach().item()))
+            regression_losses.append(float(regression_loss.detach().item()))
+            separation_losses.append(float(separation_loss.detach().item()))
             step += 1
             if step % config.gradient_accumulation_steps == 0:
                 clip_grad_norm_(trainable, max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-                if not config.freeze_target_encoder:
+                if not config.freeze_online_encoder and not config.freeze_target_encoder:
                     copy_online_adapter_to_target(vision, decay=config.ema_decay)
             if step == 1 or step % config.log_every == 0:
                 record = {
                     "step": step,
                     "loss": losses[-1],
+                    "regression_loss": regression_losses[-1],
+                    "action_separation_loss": separation_losses[-1],
                     "mean_recent_loss": sum(losses[-config.log_every :])
                     / min(len(losses), config.log_every),
                     "elapsed_seconds": time.perf_counter() - started,
@@ -395,7 +445,7 @@ def train_model4_jepa(
         clip_grad_norm_(trainable, max_norm=1.0)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-        if not config.freeze_target_encoder:
+        if not config.freeze_online_encoder and not config.freeze_target_encoder:
             copy_online_adapter_to_target(vision, decay=config.ema_decay)
 
     final_train = evaluate_action_sensitivity(
@@ -417,10 +467,11 @@ def train_model4_jepa(
         config.validation_evaluation_bundles,
     )
     elapsed = time.perf_counter() - started
-    adapter_path = output_path / "qwen_vision_online_lora"
-    vision.save_pretrained(
-        adapter_path, selected_adapters=["online"], safe_serialization=True
-    )
+    if online_parameters:
+        adapter_path = output_path / "qwen_vision_online_lora"
+        vision.save_pretrained(
+            adapter_path, selected_adapters=["online"], safe_serialization=True
+        )
     torch.save(
         {
             "action_encoder": action_encoder.state_dict(),
@@ -432,11 +483,14 @@ def train_model4_jepa(
     metrics: dict[str, Any] = {
         "config": asdict(config),
         "train_transitions": len(train_samples),
+        "train_bundles": len(train_bundles),
         "validation_transitions": len(validation_samples),
         "steps": step,
         "elapsed_seconds": elapsed,
         "steps_per_second": step / elapsed,
         "mean_loss": sum(losses) / len(losses),
+        "mean_regression_loss": sum(regression_losses) / len(regression_losses),
+        "mean_action_separation_loss": sum(separation_losses) / len(separation_losses),
         "first_10_loss": sum(losses[:10]) / min(10, len(losses)),
         "last_10_loss": sum(losses[-10:]) / min(10, len(losses)),
         "initial_train": initial_train,

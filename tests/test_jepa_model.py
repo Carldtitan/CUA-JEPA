@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
+    action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
     change_patch_weights,
@@ -64,6 +65,14 @@ def test_click_coordinates_bind_to_visual_tokens() -> None:
     )
     assert left.shape == (8, 3)
     assert left[:, 0].argmax() != right[:, 0].argmax()
+
+
+def test_action_separation_prefers_matched_futures() -> None:
+    targets = torch.eye(4).reshape(4, 1, 4)
+    weights = torch.ones(4, 1)
+    matched = action_separation_loss(targets, targets, weights)
+    shuffled = action_separation_loss(targets.roll(1, dims=0), targets, weights)
+    assert matched < shuffled
 
 
 def test_change_weights_focus_on_modified_tokens() -> None:
