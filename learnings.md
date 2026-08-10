@@ -1249,3 +1249,11 @@ The following work is not complete:
 - **Simple explanation:** The job was likely to stop before it could download and extract the full archive.
 - **Correction:** Keep the 750 completed Ubuntu images. Restart only the Windows/macOS source with eight downloads, an eight-hour hard limit, stalled-download retries, and detached mode.
 - **Status:** Corrected during ingestion. The incomplete 23 GiB temporary Windows download was discarded. Persistent Ubuntu data was not changed.
+
+### 142. SFT monitoring checkpoints would overwrite each other
+
+- **Technical term:** Checkpoint retention.
+- **Mistake:** The full SFT script planned to save every 100-step adapter checkpoint to the same `checkpoint_latest` directory.
+- **Simple explanation:** A later checkpoint would replace an earlier checkpoint. We could not recover the earlier model if later training became worse.
+- **Correction:** Save each checkpoint in a step-numbered directory. Keep the final adapters separately.
+- **Status:** Corrected before SFT. No SFT checkpoint was lost.

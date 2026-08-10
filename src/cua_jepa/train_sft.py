@@ -526,7 +526,9 @@ def train_policy_sft(
                 f"monitor_step_{optimizer_step:06d}",
                 optimizer_step,
             )
-            _save_adapters(model, output_path / "checkpoint_latest")
+            _save_adapters(
+                model, output_path / f"checkpoint_step_{optimizer_step:06d}"
+            )
             persist_outputs()
 
     final_evaluation = evaluate_policy(
