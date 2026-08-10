@@ -319,8 +319,10 @@ def evaluate_encoded_bundles(
             predicted_deltas = predictor(current, embeddings, spatial)
             predictions = reconstruct_future_latent(current, predicted_deltas)
             shared_weights = weights.max(dim=0).values
-            target_variances.append(float(targets.var(dim=0).mean().item()))
-            prediction_variances.append(float(predictions.var(dim=0).mean().item()))
+            normalized_targets = torch.nn.functional.normalize(targets.float(), dim=-1)
+            normalized_predictions = torch.nn.functional.normalize(predictions.float(), dim=-1)
+            target_variances.append(float(normalized_targets.var(dim=0).mean().item()))
+            prediction_variances.append(float(normalized_predictions.var(dim=0).mean().item()))
             for first in range(4):
                 for second in range(first + 1, 4):
                     target_pair_distances.append(

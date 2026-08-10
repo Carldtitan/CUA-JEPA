@@ -819,7 +819,15 @@ The local source metrics are:
 - **Mistake:** The default processor resized a wide screenshot by its short edge and then took a 256-pixel center crop.
 - **Simple explanation:** The encoder could lose controls on the left and right sides. The changed-region mask also used a different layout.
 - **Correction:** Fit the complete screenshot into a 256-by-256 square with neutral padding. Disable the processor resize and crop. Use the same fitted image for the changed-region mask.
-- **Status:** Corrected locally before the full pilot. Local and Modal regression checks are in progress.
+- **Status:** Corrected before the full pilot. All local tests and two Modal smoke tests pass.
+
+### 95. The V-JEPA 2 variance monitor compared different feature scales
+
+- **Technical term:** Metric scale mismatch.
+- **Mistake:** The target variance used raw encoder features. The prediction variance used normalized current features plus a predicted change.
+- **Simple explanation:** The two variance numbers used different scales, so their ratio had no clear meaning.
+- **Correction:** Normalize both future targets and future predictions before calculating action variance.
+- **Status:** Corrected before the full pilot. All 50 local tests pass.
 
 ## Current corrections in the training code
 
