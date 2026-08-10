@@ -6,6 +6,7 @@ from cua_jepa.train_sft import (
     SFTTrainConfig,
     action_prompt,
     find_last_subsequence,
+    select_evaluation_records,
     trainable_state_sha256,
 )
 
@@ -49,3 +50,20 @@ def test_trainable_state_hash_changes_only_with_trainable_parameters() -> None:
     with torch.no_grad():
         module.weight.add_(1)
     assert trainable_state_sha256(module) != before
+
+
+def test_small_evaluation_set_balances_operating_systems() -> None:
+    records = [
+        {"example_id": f"{system}-{index}", "system": system}
+        for system in ("Darwin", "Ubuntu", "Windows")
+        for index in range(20)
+    ]
+    selected = select_evaluation_records(records, limit=32, seed=7)
+    counts = {
+        system: sum(record["system"] == system for record in selected)
+        for system in ("Darwin", "Ubuntu", "Windows")
+    }
+    assert len(selected) == 32
+    assert max(counts.values()) - min(counts.values()) <= 1
+    assert selected == select_evaluation_records(records, limit=32, seed=7)
+    assert select_evaluation_records(records, limit=100, seed=7) == records

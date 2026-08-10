@@ -1257,3 +1257,11 @@ The following work is not complete:
 - **Simple explanation:** A later checkpoint would replace an earlier checkpoint. We could not recover the earlier model if later training became worse.
 - **Correction:** Save each checkpoint in a step-numbered directory. Keep the final adapters separately.
 - **Status:** Corrected before SFT. No SFT checkpoint was lost.
+
+### 143. The small SFT validation set contained only macOS examples
+
+- **Technical term:** Ordered-subset sampling bias.
+- **Mistake:** Pilot and monitoring evaluation used the first 32 validation records. The validation file groups records by operating system, so all 32 were Darwin records.
+- **Simple explanation:** The pilot would test only macOS. It could miss failures on Ubuntu and Windows.
+- **Correction:** Select small validation sets deterministically and balance them across Darwin, Ubuntu, and Windows. Use all 250 records for the full before-and-after result.
+- **Status:** Corrected before SFT. No pilot used the biased subset.

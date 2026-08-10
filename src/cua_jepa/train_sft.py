@@ -113,6 +113,39 @@ def action_prompt(record: dict[str, Any]) -> str:
     )
 
 
+def select_evaluation_records(
+    records: list[dict[str, Any]], limit: int, seed: int
+) -> list[dict[str, Any]]:
+    """Select a deterministic small set with balanced operating systems."""
+    if not limit or limit >= len(records):
+        return list(records)
+    by_system: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_system.setdefault(str(record.get("system", "unknown")), []).append(record)
+    for system, values in by_system.items():
+        values.sort(
+            key=lambda record: hashlib.sha256(
+                f"{seed}:{system}:{record['example_id']}".encode()
+            ).digest()
+        )
+    selected = []
+    position = 0
+    systems = sorted(by_system)
+    while len(selected) < limit:
+        added = False
+        for system in systems:
+            values = by_system[system]
+            if position < len(values):
+                selected.append(values[position])
+                added = True
+                if len(selected) == limit:
+                    break
+        if not added:
+            break
+        position += 1
+    return selected
+
+
 def _messages(record: dict[str, Any], image: Image.Image, include_target: bool) -> list[dict]:
     messages = [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
@@ -293,7 +326,7 @@ def evaluate_policy(
     step: int,
 ) -> dict[str, Any]:
     model.eval()
-    selected = records[:limit] if limit else records
+    selected = select_evaluation_records(records, limit, config.seed)
     predictions = []
     for record in selected:
         inputs = make_generation_inputs(
