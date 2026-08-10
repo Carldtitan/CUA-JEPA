@@ -1169,3 +1169,19 @@ The following work is not complete:
 - **Simple explanation:** The job downloaded one 5 GB archive part and then could not find any of the expected file names.
 - **Correction:** Put one URL on each line of an Aria2 input file. Enable server-provided file names. Check all expected parts before extraction.
 - **Status:** Corrected. The failed job ran for about 87 seconds. No raw archive was stored in the persistent volume. No GPU ran.
+
+### 132. The corrected Aria2 job was not reliable or resumable
+
+- **Technical term:** Fault-tolerant dataset ingestion.
+- **Mistake:** Aria2 started all 14 Ubuntu parts but returned an HTTP error after about 12 minutes. The function did not save one source before it started the next source.
+- **Simple explanation:** A network error could make the job repeat a large download. Completed source work was not saved early enough.
+- **Correction:** Download four explicitly named files at a time with `curl`. Add retries, resume support, and exact size checks. Extract, compress, verify, and commit each source before the next source starts.
+- **Status:** Corrected. The failed job saved no raw archives or images. No GPU ran.
+
+### 133. The first curl smoke test did not install curl
+
+- **Technical term:** Container runtime dependency.
+- **Mistake:** The ingestion image used the Debian slim base. That base did not contain the `curl` command.
+- **Simple explanation:** The new download code could not start because its program was missing.
+- **Correction:** Install `curl` in the Modal image. Keep the download smoke test.
+- **Status:** Corrected before another image ingestion run. No data or GPU run was affected.

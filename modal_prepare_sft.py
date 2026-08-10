@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,11 +37,15 @@ ARCHIVES = {
         [f"images.z{index:02d}" for index in range(1, 24)] + ["images.zip"],
     ),
 }
+FINAL_ARCHIVE_SIZES = {
+    "agentnet_ubuntu_5k.jsonl": 3_727_419_649,
+    "agentnet_win_mac_18k.jsonl": 855_815_467,
+}
 
 if modal.is_local():
     image = (
         modal.Image.debian_slim(python_version="3.12")
-        .apt_install("aria2", "p7zip-full", "zip")
+        .apt_install("curl", "p7zip-full", "zip")
         .pip_install("pillow>=10,<13", "requests>=2.31,<3")
         .add_local_python_source("cua_jepa", copy=True)
     )
@@ -72,26 +77,54 @@ def _write_json(path: Path, value) -> None:
     os.replace(temporary, path)
 
 
-def _aria2_download(urls: list[str], destination: Path) -> None:
+def _curl_download(
+    name: str, url: str, destination: Path, expected_size: int | None = None
+) -> str:
     destination.mkdir(parents=True, exist_ok=True)
-    input_file = destination / "download-urls.txt"
-    input_file.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    path = destination / name
+    if path.is_file() and (expected_size is None or path.stat().st_size == expected_size):
+        return name
     subprocess.run(
         [
-            "aria2c",
-            f"--input-file={input_file}",
-            "--content-disposition=true",
-            "--continue=true",
-            "--check-integrity=true",
-            "--max-concurrent-downloads=4",
-            "--split=8",
-            "--max-connection-per-server=8",
-            "--min-split-size=64M",
-            "--file-allocation=none",
-            f"--dir={destination}",
+            "curl",
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--location",
+            "--retry",
+            "10",
+            "--retry-delay",
+            "2",
+            "--retry-all-errors",
+            "--continue-at",
+            "-",
+            "--output",
+            str(path),
+            url,
         ],
         check=True,
     )
+    if expected_size is not None and path.stat().st_size != expected_size:
+        raise RuntimeError(
+            f"Wrong size for {name}: {path.stat().st_size}, expected {expected_size}"
+        )
+    return name
+
+
+def _parallel_download(
+    files: list[tuple[str, str, int | None]], destination: Path
+) -> list[str]:
+    completed = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(_curl_download, name, url, destination, expected_size): name
+            for name, url, expected_size in files
+        }
+        for future in as_completed(futures):
+            name = future.result()
+            completed.append(name)
+            print(f"Downloaded {len(completed)}/{len(files)}: {name}", flush=True)
+    return sorted(completed)
 
 
 @app.function(image=image, cpu=1, memory=1024, timeout=10 * 60)
@@ -122,7 +155,13 @@ def smoke_test_split_archive() -> dict:
     if len(selected) != 1 or unwanted or selected[0].read_bytes() != bytes([2]) * 100_000:
         raise RuntimeError("Split archive selective extraction failed")
     download_root = root / "downloads"
-    _aria2_download([f"{HF_ROOT}/README.md", f"{HF_ROOT}/LICENSE.txt"], download_root)
+    _parallel_download(
+        [
+            ("README.md", f"{HF_ROOT}/README.md", None),
+            ("LICENSE.txt", f"{HF_ROOT}/LICENSE.txt", None),
+        ],
+        download_root,
+    )
     downloaded = sorted(path.name for path in download_root.iterdir() if path.is_file())
     if "README.md" not in downloaded or "LICENSE.txt" not in downloaded:
         raise RuntimeError(f"Multi-file download names are wrong: {downloaded}")
@@ -208,8 +247,15 @@ def plan_agentnet_sft(train_count: int = 2_000, validation_count: int = 250) -> 
 
 def _download_archives(source_file: str, destination: Path) -> Path:
     directory, names = ARCHIVES[source_file]
-    urls = [f"{HF_ROOT}/{directory}/{name}" for name in names]
-    _aria2_download(urls, destination)
+    files = [
+        (
+            name,
+            f"{HF_ROOT}/{directory}/{name}",
+            FINAL_ARCHIVE_SIZES[source_file] if name == "images.zip" else 5_368_709_120,
+        )
+        for name in names
+    ]
+    _parallel_download(files, destination)
     missing = [name for name in names if not (destination / name).is_file()]
     if missing:
         raise RuntimeError(f"Archive download is incomplete: {missing}")
@@ -254,50 +300,72 @@ def ingest_agentnet_images() -> dict:
     if hashlib.sha256(selection_path.read_bytes()).hexdigest() != expected_sha256:
         raise RuntimeError("The SFT selection file changed after its audit")
 
-    scratch = Path("/tmp/agentnet")
-    extracted_roots: dict[str, Path] = {}
-    for source_file in TRAJECTORY_FILES:
-        selected_names = [
-            record["image_file"] for record in records if record["source_file"] == source_file
-        ]
-        if not selected_names:
-            continue
-        archive = _download_archives(source_file, scratch / source_file.removesuffix(".jsonl"))
-        extracted = scratch / f"extracted-{source_file.removesuffix('.jsonl')}"
-        _extract_selected(archive, selected_names, extracted)
-        extracted_roots[source_file] = extracted
-
-    source_images: dict[tuple[str, str], Path] = {}
-    for source_file, extracted in extracted_roots.items():
-        selected_names = {
-            record["image_file"] for record in records if record["source_file"] == source_file
-        }
-        for path in extracted.rglob("*"):
-            if path.is_file() and path.name in selected_names:
-                source_images[(source_file, path.name)] = path
-    missing = [
-        record["example_id"]
-        for record in records
-        if (record["source_file"], record["image_file"]) not in source_images
-    ]
-    if missing:
-        raise RuntimeError(f"The archive did not contain {len(missing)} selected images: {missing[:10]}")
-
     images_root = root / "images"
     images_root.mkdir(parents=True, exist_ok=True)
+    for record in records:
+        stored_name = hashlib.sha256(record["example_id"].encode()).hexdigest()[:24] + ".webp"
+        record["stored_image"] = f"images/{stored_name}"
+
+    scratch = Path("/tmp/agentnet")
+    for source_file in TRAJECTORY_FILES:
+        source_records = [record for record in records if record["source_file"] == source_file]
+        pending_records = [
+            record
+            for record in source_records
+            if not (root / record["stored_image"]).is_file()
+        ]
+        if not pending_records:
+            print(f"All {len(source_records)} {source_file} images already exist", flush=True)
+            continue
+        selected_names = [record["image_file"] for record in pending_records]
+        source_scratch = scratch / source_file.removesuffix(".jsonl")
+        archive = _download_archives(source_file, source_scratch)
+        extracted = scratch / f"extracted-{source_file.removesuffix('.jsonl')}"
+        _extract_selected(archive, selected_names, extracted)
+        source_images: dict[str, Path] = {}
+        selected_name_set = set(selected_names)
+        for path in extracted.rglob("*"):
+            if path.is_file() and path.name in selected_name_set:
+                source_images[path.name] = path
+        missing = [
+            record["example_id"]
+            for record in pending_records
+            if record["image_file"] not in source_images
+        ]
+        if missing:
+            raise RuntimeError(
+                f"The archive did not contain {len(missing)} selected images: {missing[:10]}"
+            )
+        for index, record in enumerate(pending_records, start=1):
+            destination = root / record["stored_image"]
+            with Image.open(source_images[record["image_file"]]) as opened:
+                opened.convert("RGB").save(destination, format="WEBP", quality=90, method=6)
+            with Image.open(destination) as verified:
+                verified.verify()
+            if index % 250 == 0:
+                volume.commit()
+                print(
+                    f"Stored {index}/{len(pending_records)} images from {source_file}",
+                    flush=True,
+                )
+        volume.commit()
+        print(f"Stored all {len(source_records)} images from {source_file}", flush=True)
+        shutil.rmtree(source_scratch, ignore_errors=True)
+        shutil.rmtree(extracted, ignore_errors=True)
+
     image_manifest = []
     total_bytes = 0
-    for index, record in enumerate(records, start=1):
-        source = source_images[(record["source_file"], record["image_file"])]
-        stored_name = hashlib.sha256(record["example_id"].encode()).hexdigest()[:24] + ".webp"
-        destination = images_root / stored_name
-        with Image.open(source) as opened:
-            image_value = opened.convert("RGB")
-            width, height = image_value.size
-            image_value.save(destination, format="WEBP", quality=90, method=6)
+    missing = []
+    for record in records:
+        destination = root / record["stored_image"]
+        if not destination.is_file():
+            missing.append(record["example_id"])
+            continue
         image_bytes = destination.read_bytes()
+        with Image.open(destination) as opened:
+            width, height = opened.size
+            opened.verify()
         total_bytes += len(image_bytes)
-        record["stored_image"] = f"images/{stored_name}"
         image_manifest.append(
             {
                 "example_id": record["example_id"],
@@ -308,9 +376,8 @@ def ingest_agentnet_images() -> dict:
                 "sha256": hashlib.sha256(image_bytes).hexdigest(),
             }
         )
-        if index % 500 == 0:
-            volume.commit()
-            print(f"Stored and verified {index}/{len(records)} images", flush=True)
+    if missing:
+        raise RuntimeError(f"Missing {len(missing)} stored images: {missing[:10]}")
 
     dataset_path = root / "dataset.jsonl"
     temporary = dataset_path.with_suffix(".jsonl.tmp")
