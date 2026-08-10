@@ -1097,3 +1097,11 @@ The following work is not complete:
 - **Simple explanation:** The working method had seen only about one quarter of the available transitions.
 - **Correction:** Keep the same architecture and loss. Train one step on every complete training bundle. Evaluate all 2,000 Jira and Slack transitions.
 - **Status:** Corrected. The two-seed overall mean increased from 39.6% to 42.7%. The increase is 3.1 points. This helps, but it does not remove seed variation or fully solve clicks.
+
+### 123. A strong JEPA predictor does not automatically improve the Qwen policy
+
+- **Technical term:** Representation transfer path.
+- **Mistake:** We discussed the strong frozen V-JEPA predictor as if it could directly become Model 4's Qwen policy.
+- **Simple explanation:** That run changed only the JEPA predictor. It did not change Qwen. Qwen gets no benefit if we remove the predictor before SFT.
+- **Correction:** Test the saved Qwen vision LoRA adapter first. Keep that adapter attached during the same SFT used for Model 2 and Model 4. A different option is to keep V-JEPA in the policy, but that would change the model architecture and inference cost.
+- **Status:** Open. The saved Qwen vision LoRA adapter was found and checked. The common SFT and downstream action test are not implemented yet.
