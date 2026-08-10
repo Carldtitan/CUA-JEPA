@@ -6,6 +6,7 @@ from cua_jepa.jepa_model import (
     ActionEncoder,
     ActionTokenConditionedPredictor,
     TiledActionConditionedPredictor,
+    IndependentTiledActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -108,6 +109,21 @@ def test_tiled_predictor_uses_complete_screen_positions() -> None:
     prediction.sum().backward()
     assert prediction.shape == (2, 8, 32)
     assert predictor.screen_position_projection.weight.grad is not None
+
+
+def test_independent_tiled_predictor_keeps_two_view_shape() -> None:
+    torch.manual_seed(9)
+    predictor = IndependentTiledActionConditionedPredictor(
+        latent_dim=32, hidden_dim=32, action_dim=32, layers=1, heads=4
+    )
+    current = torch.randn(8, 32)
+    actions = torch.randn(2, 32)
+    spatial = torch.zeros(2, 8, 3)
+    positions = torch.rand(8, 3)
+    prediction = predictor(current, actions, spatial, positions)
+    prediction.square().mean().backward()
+    assert prediction.shape == (2, 8, 32)
+    assert predictor.blocks[0].attention.in_proj_weight.grad is not None
 
 
 def test_action_separation_prefers_matched_futures() -> None:

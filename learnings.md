@@ -875,7 +875,23 @@ The local source metrics are:
 - **Mistake:** We kept the complete 1280-by-720 screen inside a 256-by-256 input. The useful screen content was only about 256 by 144 pixels.
 - **Simple explanation:** The model saw the full screen, but many small buttons and text became too small. This can limit click prediction.
 - **Correction:** Test two overlapping 256-by-256 screen views. Give each visual token its position in the complete screen. Map each click into the correct view.
-- **Status:** Implemented as a separate controlled method. All 57 local tests pass. Modal smoke and pilot results are not yet available.
+- **Status:** Implemented as a separate controlled method. All 57 local tests pass. The two-step Modal smoke passed. The controlled pilot is not yet complete.
+
+### 102. The first tiled smoke command ended its local client too early
+
+- **Technical term:** Client timeout.
+- **Mistake:** The first Modal command had a one-second local timeout. The client stopped before it could manage the remote app.
+- **Simple explanation:** The test did not run. Modal kept an empty app record until we stopped it.
+- **Correction:** Give the local Modal client the full run timeout. Use short status checks instead of ending the client.
+- **Status:** Corrected. The empty app was stopped. The next smoke completed and used about $0.005.
+
+### 103. Two fixed high-detail views did not improve validation accuracy
+
+- **Technical term:** Multi-view prediction bottleneck.
+- **Mistake:** We expected more screen detail alone to improve click prediction. We used one attention path for all 512 visual tokens.
+- **Simple explanation:** The targets became easier to tell apart. The predictor still failed to reproduce enough of their differences.
+- **Correction:** Reject the first two-view method. Test each 256-token view with a separate prediction path that shares weights.
+- **Status:** The first method reached 36.0% overall and 35.2% on clicks. The old method reached 40.4% overall and 35.5% on clicks. The separate-view method is not yet tested.
 
 ## Current corrections in the training code
 

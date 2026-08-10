@@ -230,6 +230,52 @@ class TiledActionConditionedPredictor(ActionConditionedPredictor):
         return prediction.squeeze(0) if squeeze else prediction
 
 
+class IndependentTiledActionConditionedPredictor(TiledActionConditionedPredictor):
+    """Predict each screen view separately with shared predictor weights."""
+
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+        screen_positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if screen_positions is None:
+            raise ValueError("Tiled prediction requires screen token positions")
+        squeeze = current_tokens.ndim == 2
+        if squeeze:
+            current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
+        batch, tokens, _ = current_tokens.shape
+        if tokens % 2:
+            raise ValueError(f"Two-view prediction requires an even token count: {tokens}")
+        if screen_positions.ndim == 2:
+            screen_positions = screen_positions.unsqueeze(0)
+        if screen_positions.shape[0] == 1 and batch > 1:
+            screen_positions = screen_positions.expand(batch, -1, -1)
+        hidden = self.input_projection(self.input_norm(current_tokens.float()))
+        if screen_positions.shape[:2] != hidden.shape[:2]:
+            raise ValueError(
+                f"Screen position shape mismatch: {screen_positions.shape} vs {hidden.shape}"
+            )
+        hidden = hidden + self.screen_position_projection(screen_positions.float())
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != hidden.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {hidden.shape}"
+                )
+            hidden = hidden + self.spatial_action_projection(spatial_action.float())
+        tokens_per_view = tokens // 2
+        hidden = hidden.reshape(batch * 2, tokens_per_view, -1)
+        tiled_actions = action_embedding[:, None, :].expand(-1, 2, -1).reshape(batch * 2, -1)
+        for block in self.blocks:
+            hidden = block(hidden, tiled_actions.float())
+        prediction = self.output_projection(self.output_norm(hidden))
+        prediction = prediction.reshape(batch, tokens, -1)
+        return prediction.squeeze(0) if squeeze else prediction
+
+
 class ActionTokenConditionedPredictor(nn.Module):
     """Predict visual changes with an explicit action token and spatial action map."""
 

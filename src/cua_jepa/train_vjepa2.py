@@ -23,6 +23,7 @@ from cua_jepa.jepa_model import (
     ActionConditionedPredictor,
     ActionEncoder,
     ActionTokenConditionedPredictor,
+    IndependentTiledActionConditionedPredictor,
     TiledActionConditionedPredictor,
     action_separation_loss,
     action_spatial_features,
@@ -759,6 +760,7 @@ def train_vjepa2_gui_pilot(
         "adaln_spatial": ActionConditionedPredictor,
         "action_token_spatial": ActionTokenConditionedPredictor,
         "tiled_adaln_spatial": TiledActionConditionedPredictor,
+        "independent_tiled_adaln_spatial": IndependentTiledActionConditionedPredictor,
     }
     if config.predictor_architecture not in predictor_classes:
         raise ValueError(
