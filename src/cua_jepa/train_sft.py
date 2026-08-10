@@ -126,14 +126,15 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
     bundle_order_path = run_root / "bundle_order.json"
     action_assignment = config.get("training_action_assignment", "correct")
     correct_actions = action_assignment == "correct"
+    uses_action_separation = float(config.get("action_separation_weight", 0.0)) > 0.0
     return {
         "source": (
             "action-conditioned JEPA" if correct_actions else "no-action JEPA control"
         ),
         "objective": (
             "latent regression plus action separation and anti-collapse regularization"
-            if correct_actions
-            else "matched latent regression, action-separation, and anti-collapse objective with one fixed NO_ACTION input"
+            if uses_action_separation
+            else "latent regression plus anti-collapse regularization with one fixed NO_ACTION input"
         ),
         "source_run_directory": run_root.name,
         "final_metrics_sha256": sha256_file(final_metrics_path),
@@ -154,7 +155,7 @@ def source_jepa_audit(jepa_adapter_path: Path | None) -> dict[str, Any]:
         "training_config": config,
         "training_action_assignment": action_assignment,
         "uses_correct_action_information": correct_actions,
-        "uses_action_separation": float(config.get("action_separation_weight", 0.0)) > 0.0,
+        "uses_action_separation": uses_action_separation,
         "uses_variance_regularization": float(
             config.get("variance_regularization_weight", 0.0)
         )

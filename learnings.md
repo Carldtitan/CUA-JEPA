@@ -1353,3 +1353,11 @@ The following work is not complete:
 - **Simple explanation:** The loss asked one identical input to select four different future screens. The model could not solve this task.
 - **Correction:** Set the Model 3 action-separation weight to zero. Keep latent JEPA regression, the same four future screens, the same Qwen visual LoRA, and the same training order. Keep action separation only in action-conditioned Model 4.
 - **Status:** Corrected in code after the first full attempt stopped with a non-finite gradient. A clean Model 3 restart is pending.
+
+### 155. The Model 3 SFT audit still described the removed loss
+
+- **Technical term:** Objective-provenance mismatch.
+- **Mistake:** The SFT audit text still said that Model 3 used action separation after the loss was removed.
+- **Simple explanation:** The saved report would describe a loss that Model 3 did not use.
+- **Correction:** Build the objective label from the saved action-separation weight. Model 3 must report latent regression, anti-collapse regularization, and fixed `NO_ACTION` input.
+- **Status:** Corrected before Model 3 SFT. The new JEPA full run is not affected because this text belongs to the later SFT audit.

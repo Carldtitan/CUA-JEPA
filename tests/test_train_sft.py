@@ -85,7 +85,7 @@ def test_source_jepa_audit_records_non_pure_objective(tmp_path) -> None:
     adapter.mkdir(parents=True)
     (adapter / "adapter_model.safetensors").write_bytes(b"adapter")
     (tmp_path / "run" / "final_metrics.json").write_text(
-        '{"config":{"action_separation_weight":0.25,'
+        '{"config":{"action_separation_weight":0.0,'
         '"variance_regularization_weight":0.05,'
         '"covariance_regularization_weight":0.05},'
         '"steps":10,"stop_reason":"done",'
@@ -116,3 +116,5 @@ def test_source_jepa_audit_identifies_model3_no_action_control(tmp_path) -> None
     assert audit["source"] == "no-action JEPA control"
     assert audit["uses_correct_action_information"] is False
     assert audit["training_action_assignment"] == "no_action"
+    assert audit["uses_action_separation"] is False
+    assert "fixed NO_ACTION" in audit["objective"]
