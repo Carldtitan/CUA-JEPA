@@ -1329,3 +1329,11 @@ The following work is not complete:
 - **Simple explanation:** The training was correct, but the log could make it look incorrect.
 - **Correction:** Log the source action mix and the predictor conditioning mix as separate fields. Model 3 must report `NO_ACTION` four times for each bundle.
 - **Status:** Corrected after the approved two-step smoke and before the full Model 3 run.
+
+### 152. The no-action Model 3 target representation started to collapse
+
+- **Technical term:** Target-representation collapse.
+- **Mistake:** The existing collapse rule focused on action separation. It did not directly flag a large fall in target visual variance.
+- **Simple explanation:** Model 3 cannot know which of four futures will occur. Its visual representations started becoming nearly identical instead.
+- **Correction:** Record target variance against its step-zero value. Interpret Model 4 against both Model 3 and Model 2. Model 4 must beat Model 2 before we claim that JEPA improved the final policy.
+- **Status:** Detected at step 500 of the full Model 3 run. Target variance fell from 0.0952 to 0.000345. The run continues so the agreed no-action control remains complete.
