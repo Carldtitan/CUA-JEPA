@@ -71,6 +71,7 @@ if modal.is_local():
             "pillow>=10,<13",
             "safetensors>=0.5,<1",
             "torch>=2.8,<3",
+            "torchvision>=0.23,<1",
             "transformers>=4.57,<5",
         )
         .add_local_python_source("cua_jepa", copy=True)

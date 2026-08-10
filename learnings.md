@@ -765,6 +765,14 @@ The local source metrics are:
 - **Correction:** Validate LoRA identity only when the run has LoRA parameters. Require empty LoRA fields for a frozen-encoder run.
 - **Status:** Corrected. The new frozen-encoder regression test passes.
 
+### 88. The first V-JEPA 2 image missed its video-processing dependency
+
+- **Technical term:** Missing runtime dependency.
+- **Mistake:** The Modal image included PyTorch and Transformers but did not include `torchvision`.
+- **Simple explanation:** The V-JEPA 2 video processor could not start without the image and video helper library.
+- **Correction:** Add a compatible `torchvision` version to the training dependencies and Modal image.
+- **Status:** Found during the encoder smoke test. The dependency correction is in progress.
+
 ## Current corrections in the training code
 
 The controlled Model 4 pilot code now does these actions:
