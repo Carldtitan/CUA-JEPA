@@ -223,6 +223,120 @@ def latent_prediction_loss(
     return (per_token * weights).sum() / weights.sum().clamp_min(1.0)
 
 
+def latent_delta(current: torch.Tensor, future: torch.Tensor) -> torch.Tensor:
+    """Return the change from the current latent tokens to the future tokens."""
+
+    current = F.normalize(current.detach().float(), dim=-1)
+    future = F.normalize(future.detach().float(), dim=-1)
+    if current.ndim == 2 and future.ndim == 3:
+        current = current.unsqueeze(0)
+    if current.shape[-2:] != future.shape[-2:]:
+        raise ValueError(f"Current/future token mismatch: {current.shape} vs {future.shape}")
+    return future - current
+
+
+def reconstruct_future_latent(
+    current: torch.Tensor, predicted_delta: torch.Tensor
+) -> torch.Tensor:
+    """Add a predicted change to normalized current-screen tokens for evaluation."""
+
+    current = F.normalize(current.detach().float(), dim=-1)
+    if current.ndim == 2 and predicted_delta.ndim == 3:
+        current = current.unsqueeze(0)
+    return current + predicted_delta.float()
+
+
+def latent_delta_loss(
+    predicted_delta: torch.Tensor,
+    target_delta: torch.Tensor,
+    weights: torch.Tensor | None = None,
+    direction_weight: float = 0.75,
+    magnitude_weight: float = 0.25,
+) -> torch.Tensor:
+    """Compare latent changes without rewarding a copied current screen."""
+
+    predicted_delta = predicted_delta.float()
+    target_delta = target_delta.detach().float()
+    if predicted_delta.shape != target_delta.shape:
+        raise ValueError(
+            f"Predicted/target delta mismatch: {predicted_delta.shape} vs {target_delta.shape}"
+        )
+    target_magnitude = target_delta.norm(dim=-1)
+    predicted_magnitude = predicted_delta.norm(dim=-1)
+    direction = 1.0 - F.cosine_similarity(
+        predicted_delta, target_delta, dim=-1, eps=1e-6
+    )
+    # A direction is not meaningful when the target change is almost zero.
+    direction = direction * (target_magnitude > 1e-5).float()
+    magnitude = F.smooth_l1_loss(
+        predicted_magnitude, target_magnitude, reduction="none"
+    )
+    per_token = direction_weight * direction + magnitude_weight * magnitude
+    if weights is None:
+        return per_token.mean()
+    if per_token.shape != weights.shape:
+        raise ValueError(f"Delta weight mismatch: {per_token.shape} vs {weights.shape}")
+    return (per_token * weights).sum() / weights.sum().clamp_min(1.0)
+
+
+def _weighted_branch_summary(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    if values.ndim != 3 or weights.shape != values.shape[:2]:
+        raise ValueError(f"Bundle summary shape mismatch: {values.shape} vs {weights.shape}")
+    normalized_weights = weights.float() / weights.sum(dim=1, keepdim=True).clamp_min(1.0)
+    return (values.float() * normalized_weights.unsqueeze(-1)).sum(dim=1)
+
+
+def bundle_anti_collapse_losses(
+    predicted_deltas: torch.Tensor,
+    target_deltas: torch.Tensor,
+    target_weights: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """Preserve the target bundle's action-dependent variation without negatives."""
+
+    predicted = _weighted_branch_summary(predicted_deltas, target_weights)
+    target = _weighted_branch_summary(target_deltas.detach(), target_weights)
+    predicted = F.normalize(predicted, dim=-1)
+    target = F.normalize(target, dim=-1)
+
+    predicted_centered = predicted - predicted.mean(dim=0, keepdim=True)
+    target_centered = target - target.mean(dim=0, keepdim=True)
+
+    predicted_std = predicted_centered.square().mean(dim=0).sqrt()
+    target_std = target_centered.square().mean(dim=0).sqrt()
+    variance = (predicted_std - target_std).square().mean()
+    variance = variance / target_std.square().mean().detach().clamp_min(1e-6)
+
+    # Match the small action-by-action covariance Gram matrix. This is stable
+    # with four branches and avoids a large latent-dimension covariance matrix.
+    predicted_covariance = predicted_centered @ predicted_centered.T / predicted.shape[-1]
+    target_covariance = target_centered @ target_centered.T / target.shape[-1]
+    covariance = F.mse_loss(predicted_covariance, target_covariance)
+    covariance = covariance / target_covariance.square().mean().detach().clamp_min(1e-8)
+
+    predicted_relations: list[torch.Tensor] = []
+    target_relations: list[torch.Tensor] = []
+    for first in range(predicted.shape[0]):
+        for second in range(first + 1, predicted.shape[0]):
+            predicted_relations.append(
+                1.0 - F.cosine_similarity(
+                    predicted[first], predicted[second], dim=0, eps=1e-6
+                )
+            )
+            target_relations.append(
+                1.0
+                - F.cosine_similarity(target[first], target[second], dim=0, eps=1e-6)
+            )
+    predicted_relation = torch.stack(predicted_relations)
+    target_relation = torch.stack(target_relations).detach()
+    # Similar target futures receive little separation pressure.
+    relation_weights = target_relation.clamp_min(1e-4)
+    relation = (
+        (predicted_relation - target_relation).square() * relation_weights
+    ).sum() / relation_weights.sum().clamp_min(1e-6)
+
+    return {"variance": variance, "covariance": covariance, "relation": relation}
+
+
 def action_separation_loss(
     predictions: torch.Tensor,
     targets: torch.Tensor,

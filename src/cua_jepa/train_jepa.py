@@ -19,8 +19,12 @@ from cua_jepa.jepa_model import (
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
+    bundle_anti_collapse_losses,
     change_patch_weights,
+    latent_delta,
+    latent_delta_loss,
     latent_prediction_loss,
+    reconstruct_future_latent,
 )
 
 
@@ -51,6 +55,21 @@ class JEPATrainConfig:
     validation_evaluation_bundles: int = 0
     action_separation_weight: float = 0.0
     action_separation_temperature: float = 0.1
+    changed_region_loss_weight: float = 0.8
+    global_loss_weight: float = 0.2
+    delta_direction_weight: float = 0.75
+    delta_magnitude_weight: float = 0.25
+    variance_regularization_weight: float = 0.05
+    covariance_regularization_weight: float = 0.05
+    relation_regularization_weight: float = 0.1
+    collapse_check_every: int = 100
+    collapse_check_bundles: int = 8
+    collapse_check_start_step: int = 200
+    collapse_patience: int = 2
+    collapse_accuracy_tolerance: float = 0.02
+    collapse_min_separation_ratio: float = 0.03
+    collapse_min_shuffled_gap: float = 0.0001
+    stop_on_collapse: bool = True
     log_every: int = 5
 
     @classmethod
@@ -157,7 +176,7 @@ def evaluate_action_sensitivity(
     predictor: ActionConditionedPredictor,
     device: torch.device,
     max_bundles: int,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     groups = [branches for branches in group_by_bundle(samples).values() if len(branches) == 4]
     if max_bundles > 0:
         groups = groups[:max_bundles]
@@ -172,6 +191,9 @@ def evaluate_action_sensitivity(
     target_pair_distances: list[float] = []
     target_pair_distances_unweighted: list[float] = []
     prediction_pair_distances: list[float] = []
+    delta_distances: list[float] = []
+    app_results: dict[str, dict[str, float]] = {}
+    action_results: dict[str, dict[str, float]] = {}
     for branches in groups:
         current_image = branches[0].current_image()
         context_inputs = processor(images=[current_image], return_tensors="pt")
@@ -208,14 +230,15 @@ def evaluate_action_sensitivity(
         spatial_actions = action_spatial_features(
             actions, context_inputs["image_grid_thw"][0], device
         )
-        predictions = [
-            predictor(
-                context_tokens,
-                embeddings[index : index + 1],
-                spatial_actions[index : index + 1],
-            )
-            for index in range(4)
-        ]
+        predicted_deltas = predictor(context_tokens, embeddings, spatial_actions)
+        predictions = reconstruct_future_latent(context_tokens, predicted_deltas)
+        target_tensor = torch.stack(targets)
+        target_delta = latent_delta(context_tokens, target_tensor)
+        weight_tensor = torch.stack(target_weights)
+        per_bundle_delta_loss = latent_delta_loss(
+            predicted_deltas, target_delta, weight_tensor
+        )
+        delta_distances.extend([float(per_bundle_delta_loss.item())] * 4)
         for first in range(4):
             for second in range(first + 1, 4):
                 pair_weights = torch.maximum(target_weights[first], target_weights[second])
@@ -241,7 +264,8 @@ def evaluate_action_sensitivity(
                 float(latent_prediction_loss(prediction, target, target_weights[target_index]).item())
                 for target_index, target in enumerate(targets)
             ]
-            correct_ranks += int(min(range(4), key=distances.__getitem__) == index)
+            is_correct = int(min(range(4), key=distances.__getitem__) == index)
+            correct_ranks += is_correct
             correct_distances.append(distances[index])
             shuffled_prediction = predictions[(index + 1) % 4]
             shuffled_distances.append(
@@ -251,6 +275,15 @@ def evaluate_action_sensitivity(
                     ).item()
                 )
             )
+            app = branches[index].app
+            action_kind = str(branches[index].action.get("kind", "unknown"))
+            for key, results in ((app, app_results), (action_kind, action_results)):
+                row = results.setdefault(
+                    key, {"count": 0.0, "correct": 0.0, "correct_distance": 0.0}
+                )
+                row["count"] += 1.0
+                row["correct"] += is_correct
+                row["correct_distance"] += distances[index]
     _set_adapter(vision, "online")
     if any(parameter.requires_grad for parameter in vision.parameters()):
         vision.train()
@@ -261,9 +294,22 @@ def evaluate_action_sensitivity(
     count = len(groups) * 4
     target_pair_mean = sum(target_pair_distances) / len(target_pair_distances)
     prediction_pair_mean = sum(prediction_pair_distances) / len(prediction_pair_distances)
+    def finalize_breakdown(
+        values: dict[str, dict[str, float]],
+    ) -> dict[str, dict[str, float]]:
+        return {
+            key: {
+                "count": row["count"],
+                "four_way_accuracy": row["correct"] / row["count"],
+                "correct_action_distance": row["correct_distance"] / row["count"],
+            }
+            for key, row in sorted(values.items())
+        }
+
     return {
         "bundles": float(len(groups)),
         "four_way_accuracy": correct_ranks / count,
+        "delta_prediction_loss": sum(delta_distances) / count,
         "correct_action_distance": sum(correct_distances) / count,
         "shuffled_action_distance": sum(shuffled_distances) / count,
         "shuffled_minus_correct": (sum(shuffled_distances) - sum(correct_distances)) / count,
@@ -277,6 +323,8 @@ def evaluate_action_sensitivity(
         "prediction_action_distance_max": max(prediction_pair_distances),
         "prediction_to_target_separation_ratio": prediction_pair_mean
         / max(target_pair_mean, 1e-8),
+        "by_app": finalize_breakdown(app_results),
+        "by_action_kind": finalize_breakdown(action_results),
     }
 
 
@@ -353,7 +401,15 @@ def train_model4_jepa(
     step = 0
     losses: list[float] = []
     regression_losses: list[float] = []
+    changed_region_losses: list[float] = []
+    global_losses: list[float] = []
+    variance_losses: list[float] = []
+    covariance_losses: list[float] = []
+    relation_losses: list[float] = []
     separation_losses: list[float] = []
+    collapse_checks: list[dict[str, Any]] = []
+    consecutive_collapse_checks = 0
+    stopped_for_collapse = False
     log_path = output_path / "train.jsonl"
     while step < config.max_steps:
         epoch_bundles = list(train_bundles)
@@ -398,12 +454,33 @@ def train_model4_jepa(
             actions = [branch.action for branch in branches]
             action_embeddings = _action_embedding(action_encoder, actions, device)
             spatial_actions = action_spatial_features(actions, current_grid[0], device)
-            predictions = predictor(current_tokens, action_embeddings, spatial_actions)
+            predicted_deltas = predictor(
+                current_tokens, action_embeddings, spatial_actions
+            )
             targets = torch.stack(future_tokens)
             target_weights = torch.stack(weights)
-            regression_loss = latent_prediction_loss(
-                predictions, targets, target_weights
+            target_deltas = latent_delta(current_tokens, targets)
+            changed_region_loss = latent_delta_loss(
+                predicted_deltas,
+                target_deltas,
+                target_weights,
+                direction_weight=config.delta_direction_weight,
+                magnitude_weight=config.delta_magnitude_weight,
             )
+            global_loss = latent_delta_loss(
+                predicted_deltas,
+                target_deltas,
+                direction_weight=config.delta_direction_weight,
+                magnitude_weight=config.delta_magnitude_weight,
+            )
+            regression_loss = (
+                config.changed_region_loss_weight * changed_region_loss
+                + config.global_loss_weight * global_loss
+            )
+            regularizers = bundle_anti_collapse_losses(
+                predicted_deltas, target_deltas, target_weights
+            )
+            predictions = reconstruct_future_latent(current_tokens, predicted_deltas)
             if config.action_separation_weight > 0:
                 separation_loss = action_separation_loss(
                     predictions,
@@ -413,10 +490,21 @@ def train_model4_jepa(
                 )
             else:
                 separation_loss = regression_loss.new_zeros(())
-            loss = regression_loss + config.action_separation_weight * separation_loss
+            loss = (
+                regression_loss
+                + config.variance_regularization_weight * regularizers["variance"]
+                + config.covariance_regularization_weight * regularizers["covariance"]
+                + config.relation_regularization_weight * regularizers["relation"]
+                + config.action_separation_weight * separation_loss
+            )
             (loss / config.gradient_accumulation_steps).backward()
             losses.append(float(loss.detach().item()))
             regression_losses.append(float(regression_loss.detach().item()))
+            changed_region_losses.append(float(changed_region_loss.detach().item()))
+            global_losses.append(float(global_loss.detach().item()))
+            variance_losses.append(float(regularizers["variance"].detach().item()))
+            covariance_losses.append(float(regularizers["covariance"].detach().item()))
+            relation_losses.append(float(regularizers["relation"].detach().item()))
             separation_losses.append(float(separation_loss.detach().item()))
             step += 1
             if step % config.gradient_accumulation_steps == 0:
@@ -430,6 +518,11 @@ def train_model4_jepa(
                     "step": step,
                     "loss": losses[-1],
                     "regression_loss": regression_losses[-1],
+                    "changed_region_loss": changed_region_losses[-1],
+                    "global_loss": global_losses[-1],
+                    "variance_loss": variance_losses[-1],
+                    "covariance_loss": covariance_losses[-1],
+                    "relation_loss": relation_losses[-1],
                     "action_separation_loss": separation_losses[-1],
                     "mean_recent_loss": sum(losses[-config.log_every :])
                     / min(len(losses), config.log_every),
@@ -438,8 +531,52 @@ def train_model4_jepa(
                 with log_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record) + "\n")
                 print(json.dumps(record), flush=True)
+            if (
+                config.collapse_check_every > 0
+                and step >= config.collapse_check_start_step
+                and step % config.collapse_check_every == 0
+            ):
+                collapse_metrics = evaluate_action_sensitivity(
+                    validation_samples,
+                    processor,
+                    vision,
+                    action_encoder,
+                    predictor,
+                    device,
+                    config.collapse_check_bundles,
+                )
+                collapsed = (
+                    collapse_metrics["four_way_accuracy"]
+                    <= 0.25 + config.collapse_accuracy_tolerance
+                    and collapse_metrics["prediction_to_target_separation_ratio"]
+                    < config.collapse_min_separation_ratio
+                    and collapse_metrics["shuffled_minus_correct"]
+                    < config.collapse_min_shuffled_gap
+                )
+                consecutive_collapse_checks = (
+                    consecutive_collapse_checks + 1 if collapsed else 0
+                )
+                check_record: dict[str, Any] = {
+                    "step": step,
+                    "event": "collapse_check",
+                    "collapsed": collapsed,
+                    "consecutive_collapse_checks": consecutive_collapse_checks,
+                    "metrics": collapse_metrics,
+                }
+                collapse_checks.append(check_record)
+                with log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(check_record) + "\n")
+                print(json.dumps(check_record), flush=True)
+                if (
+                    config.stop_on_collapse
+                    and consecutive_collapse_checks >= config.collapse_patience
+                ):
+                    stopped_for_collapse = True
+                    break
             if step >= config.max_steps:
                 break
+        if stopped_for_collapse:
+            break
 
     if step % config.gradient_accumulation_steps:
         clip_grad_norm_(trainable, max_norm=1.0)
@@ -490,6 +627,12 @@ def train_model4_jepa(
         "steps_per_second": step / elapsed,
         "mean_loss": sum(losses) / len(losses),
         "mean_regression_loss": sum(regression_losses) / len(regression_losses),
+        "mean_changed_region_loss": sum(changed_region_losses)
+        / len(changed_region_losses),
+        "mean_global_loss": sum(global_losses) / len(global_losses),
+        "mean_variance_loss": sum(variance_losses) / len(variance_losses),
+        "mean_covariance_loss": sum(covariance_losses) / len(covariance_losses),
+        "mean_relation_loss": sum(relation_losses) / len(relation_losses),
         "mean_action_separation_loss": sum(separation_losses) / len(separation_losses),
         "first_10_loss": sum(losses[:10]) / min(10, len(losses)),
         "last_10_loss": sum(losses[-10:]) / min(10, len(losses)),
@@ -497,6 +640,8 @@ def train_model4_jepa(
         "final_train": final_train,
         "initial_validation": initial_validation,
         "final_validation": final_validation,
+        "collapse_checks": collapse_checks,
+        "stopped_for_collapse": stopped_for_collapse,
         "trainable_online_lora_parameters": sum(p.numel() for p in online_parameters),
         "trainable_head_parameters": sum(p.numel() for p in head_parameters),
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / (1024**3),

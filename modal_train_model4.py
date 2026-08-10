@@ -130,10 +130,12 @@ def check_processor() -> dict:
         "/dataset": data_volume,
     },
 )
-def run_model4_pilot(mode: str = "smoke") -> dict:
+def run_model4_pilot(mode: str = "smoke", seed: int = 0) -> dict:
     from cua_jepa.train_jepa import JEPATrainConfig, train_model4_jepa
 
     config = JEPATrainConfig.from_json("/opt/cua-jepa/model4_jepa_pilot.json")
+    if seed:
+        config.seed = seed
     if mode == "smoke":
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -167,7 +169,10 @@ def run_model4_pilot(mode: str = "smoke") -> dict:
         raise ValueError(
             "mode must be 'smoke', 'pilot', 'quick', 'pure', 'separation', or 'stage2'"
         )
-    run_id = datetime.now(timezone.utc).strftime(f"model4-{mode}-%Y%m%dT%H%M%SZ")
+    seed_label = f"-seed{config.seed}"
+    run_id = datetime.now(timezone.utc).strftime(
+        f"model4-{mode}{seed_label}-%Y%m%dT%H%M%SZ"
+    )
     output_dir = Path("/training") / run_id
     train_paths = ["/opt/cua-jepa/train.tar"]
     validation_paths = ["/opt/cua-jepa/validation.tar"]
@@ -193,9 +198,9 @@ def run_model4_pilot(mode: str = "smoke") -> dict:
 
 
 @app.local_entrypoint()
-def main(mode: str = "deps") -> None:
+def main(mode: str = "deps", seed: int = 0) -> None:
     if mode == "deps":
         print(json.dumps(check_processor.remote(), indent=2))
         return
-    metrics = run_model4_pilot.remote(mode)
+    metrics = run_model4_pilot.remote(mode, seed)
     print(json.dumps(metrics, indent=2))

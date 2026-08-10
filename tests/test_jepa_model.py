@@ -7,8 +7,12 @@ from cua_jepa.jepa_model import (
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
+    bundle_anti_collapse_losses,
     change_patch_weights,
+    latent_delta,
+    latent_delta_loss,
     latent_prediction_loss,
+    reconstruct_future_latent,
 )
 
 
@@ -73,6 +77,28 @@ def test_action_separation_prefers_matched_futures() -> None:
     matched = action_separation_loss(targets, targets, weights)
     shuffled = action_separation_loss(targets.roll(1, dims=0), targets, weights)
     assert matched < shuffled
+
+
+def test_delta_prediction_uses_change_not_complete_future() -> None:
+    current = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+    future = torch.tensor([[0.0, 1.0, 0.0, 0.0]])
+    target_delta = latent_delta(current, future)
+    matched = latent_delta_loss(target_delta, target_delta)
+    copied_screen = latent_delta_loss(torch.zeros_like(target_delta), target_delta)
+    reconstructed = reconstruct_future_latent(current, target_delta)
+    assert matched < copied_screen
+    assert latent_prediction_loss(reconstructed, future) < 1e-6
+
+
+def test_bundle_regularization_penalizes_identical_action_predictions() -> None:
+    targets = torch.eye(4).reshape(4, 1, 4)
+    weights = torch.ones(4, 1)
+    matched = bundle_anti_collapse_losses(targets, targets, weights)
+    collapsed_predictions = targets[:1].expand_as(targets)
+    collapsed = bundle_anti_collapse_losses(collapsed_predictions, targets, weights)
+    assert matched["variance"] < collapsed["variance"]
+    assert matched["covariance"] < collapsed["covariance"]
+    assert matched["relation"] < collapsed["relation"]
 
 
 def test_change_weights_focus_on_modified_tokens() -> None:

@@ -13,6 +13,7 @@ data/synthetic/
 data/pilot/
 artifacts/
 logs/
+tmp/
 *.log
 *.pid
 
