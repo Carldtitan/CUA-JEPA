@@ -992,7 +992,7 @@ The following work is not complete:
 - **Mistake:** The predictor could add action-based shifts and a pointer heatmap directly to its hidden state. This gave it a path that did not require the current-screen features.
 - **Simple explanation:** The pure counterfactual model reached 31.4%. A wrong action reduced the score by 10 points. A wrong current screen reduced it by only 1.6 points. The model learned a general action pattern more than a screen-specific result.
 - **Correction:** Add a visual-gated predictor. The action can only multiply visual features. It cannot add new action-only content. Keep both shuffle controls.
-- **Status:** Implemented. The architecture test and Modal pilot are pending.
+- **Status:** Tested and rejected. Pure visual gating reached 32.6%. It improved the wrong-screen drop to 3.2 points, but it did not pass the 40% accuracy or 5-point screen-dependence gates.
 
 ### 110. The first scaled counterfactual run did not reuse an old cache
 
@@ -1001,3 +1001,27 @@ The following work is not complete:
 - **Simple explanation:** The old letterbox run was made before cache support. The existing large cache used a different configuration. Modal encoded 8,500 screens again.
 - **Correction:** List the cache files and compare run configurations before we promise a cache hit. The new letterbox cache is `2d3715e204bdaa2ad33b5401fe59aa456b7b81fREDACTEDe91a0e5772.pt`.
 - **Status:** Corrected. The new cache is saved in the Modal volume. Later letterbox tests can reuse it.
+
+### 111. Counterfactual centering removed useful state information
+
+- **Technical term:** Over-centering of target representations.
+- **Mistake:** We expected the average-future subtraction to keep only useful action effects. It also removed absolute future-state information that helped transfer to unseen software.
+- **Simple explanation:** The centered model learned the training applications. It did not transfer well to Jira and Slack. Pure training reached 31.4%. Visual gating reached 32.6%. Added action separation reached 31.2%.
+- **Correction:** Reject counterfactual centering as the current main method. Keep the normal future-delta target. Use the centered result only as an ablation.
+- **Status:** Corrected. All three results are saved in the Modal volume.
+
+### 112. The old best result did not have a wrong-screen control
+
+- **Technical term:** Current-state dependence control.
+- **Mistake:** The earlier 40.4% result proved action dependence, but it did not prove that the predictor used the current screen.
+- **Simple explanation:** A model can learn general action patterns without reading the software state.
+- **Correction:** Rerun the exact old method. Replace the current screen with a screen from the next bundle. Keep the action and target unchanged.
+- **Status:** Corrected. The repeated result reached 40.4%. A wrong action reduced it by 19.6 points. A wrong screen reduced it by 15 points. The model uses both inputs.
+
+### 113. We treated Qwen and V-JEPA2 as replacement choices
+
+- **Technical term:** Complementary representation fusion.
+- **Mistake:** We tested Qwen targets and V-JEPA2 targets as separate choices. We did not test whether their features help each other.
+- **Simple explanation:** Qwen can represent GUI text and controls. V-JEPA2 can represent visual changes. One encoder does not need to replace the other.
+- **Correction:** Freeze both encoders. Resize Qwen visual tokens to a small fixed grid. Add them through zero-initialized gated cross-attention in the V-JEPA predictor. Keep the old target, data, seed, and action-separation loss.
+- **Status:** Implemented. All 67 local tests pass. A Modal smoke test is pending.

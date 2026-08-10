@@ -255,6 +255,66 @@ class VisualGatedActionConditionedPredictor(nn.Module):
         return prediction.squeeze(0) if squeeze else prediction
 
 
+class QwenVJEPAFusionPredictor(ActionConditionedPredictor):
+    """Add frozen Qwen GUI features through zero-initialized cross-attention gates."""
+
+    uses_semantic_features = True
+
+    def __init__(
+        self,
+        latent_dim: int = 1024,
+        semantic_dim: int = 2048,
+        hidden_dim: int = 384,
+        action_dim: int = 384,
+        layers: int = 6,
+        heads: int = 8,
+    ) -> None:
+        super().__init__(latent_dim, hidden_dim, action_dim, layers, heads)
+        self.semantic_norm = nn.LayerNorm(semantic_dim)
+        self.semantic_projection = nn.Linear(semantic_dim, hidden_dim)
+        self.cross_norms = nn.ModuleList(nn.LayerNorm(hidden_dim) for _ in range(layers))
+        self.cross_attentions = nn.ModuleList(
+            nn.MultiheadAttention(hidden_dim, heads, batch_first=True)
+            for _ in range(layers)
+        )
+        self.cross_gates = nn.Parameter(torch.zeros(layers, hidden_dim))
+
+    def forward(
+        self,
+        current_tokens: torch.Tensor,
+        action_embedding: torch.Tensor,
+        spatial_action: torch.Tensor | None = None,
+        semantic_tokens: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if semantic_tokens is None:
+            raise ValueError("Qwen-V-JEPA fusion requires semantic tokens")
+        squeeze = current_tokens.ndim == 2
+        if squeeze:
+            current_tokens = current_tokens.unsqueeze(0)
+        if current_tokens.shape[0] == 1 and action_embedding.shape[0] > 1:
+            current_tokens = current_tokens.expand(action_embedding.shape[0], -1, -1)
+        if semantic_tokens.ndim == 2:
+            semantic_tokens = semantic_tokens.unsqueeze(0)
+        if semantic_tokens.shape[0] == 1 and current_tokens.shape[0] > 1:
+            semantic_tokens = semantic_tokens.expand(current_tokens.shape[0], -1, -1)
+        hidden = self.input_projection(self.input_norm(current_tokens.float()))
+        semantic = self.semantic_projection(self.semantic_norm(semantic_tokens.float()))
+        if spatial_action is not None:
+            if spatial_action.shape[:2] != hidden.shape[:2]:
+                raise ValueError(
+                    f"Spatial action shape mismatch: {spatial_action.shape} vs {hidden.shape}"
+                )
+            hidden = hidden + self.spatial_action_projection(spatial_action.float())
+        for index, block in enumerate(self.blocks):
+            hidden = block(hidden, action_embedding.float())
+            fused, _ = self.cross_attentions[index](
+                self.cross_norms[index](hidden), semantic, semantic, need_weights=False
+            )
+            hidden = hidden + torch.tanh(self.cross_gates[index]).view(1, 1, -1) * fused
+        prediction = self.output_projection(self.output_norm(hidden))
+        return prediction.squeeze(0) if squeeze else prediction
+
+
 class TiledActionConditionedPredictor(ActionConditionedPredictor):
     """Condition tiled visual tokens on their location in the complete screen."""
 

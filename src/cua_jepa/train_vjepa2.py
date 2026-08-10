@@ -25,6 +25,7 @@ from cua_jepa.jepa_model import (
     ActionEncoder,
     ActionTokenConditionedPredictor,
     IndependentTiledActionConditionedPredictor,
+    QwenVJEPAFusionPredictor,
     TiledActionConditionedPredictor,
     VisualGatedActionConditionedPredictor,
     action_separation_loss,
@@ -97,6 +98,12 @@ class VJEPA2PilotConfig:
     memory_cost_per_gib_second: float = 0.00000222
     feature_cache_dir: str | None = None
     feature_cache_version: int = 1
+    use_qwen_semantic_features: bool = False
+    qwen_model_id: str = "Qwen/Qwen3-VL-2B-Instruct"
+    qwen_model_revision: str = "89644892e4d85e24eaac8bacfd4f463576704203"
+    qwen_semantic_grid_size: int = 8
+    qwen_feature_cache_dir: str | None = None
+    qwen_feature_cache_version: int = 1
 
 
 @dataclass
@@ -112,6 +119,7 @@ class EncodedBundle:
     target_weights: torch.Tensor
     spatial_features: torch.Tensor | None = None
     screen_positions: torch.Tensor | None = None
+    semantic_current: torch.Tensor | None = None
 
 
 def encoded_feature_cache_key(
@@ -162,6 +170,112 @@ def validate_encoded_feature_cache(
     return train, validation
 
 
+def qwen_feature_cache_key(
+    config: VJEPA2PilotConfig, dataset_audit: dict[str, Any]
+) -> str:
+    values = {
+        "version": config.qwen_feature_cache_version,
+        "model_id": config.qwen_model_id,
+        "model_revision": config.qwen_model_revision,
+        "grid_size": config.qwen_semantic_grid_size,
+        "max_train_transitions": config.max_train_transitions,
+        "max_validation_transitions": config.max_validation_transitions,
+        "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
+        "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
+    }
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def qwen_tokens_to_fixed_grid(
+    tokens: torch.Tensor, grid_thw: torch.Tensor, size: int
+) -> torch.Tensor:
+    """Resize Qwen's merged visual-token grid to a small fixed semantic grid."""
+
+    t, grid_h, grid_w = (int(value) for value in grid_thw.tolist())
+    merged_h = grid_h // 2
+    merged_w = grid_w // 2
+    expected = t * merged_h * merged_w
+    if tokens.ndim != 2 or tokens.shape[0] != expected:
+        raise ValueError(
+            f"Qwen token/grid mismatch: {tuple(tokens.shape)} vs {(t, grid_h, grid_w)}"
+        )
+    values = tokens.float().reshape(t, merged_h, merged_w, -1).mean(dim=0)
+    values = values.permute(2, 0, 1).unsqueeze(0)
+    values = torch.nn.functional.interpolate(
+        values, size=(size, size), mode="bilinear", align_corners=False
+    )
+    return values.squeeze(0).permute(1, 2, 0).reshape(size * size, -1)
+
+
+def encode_qwen_semantic_bundles(
+    groups: list[list[TransitionSample]],
+    processor,
+    vision,
+    device: torch.device,
+    grid_size: int,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, torch.Tensor]:
+    from cua_jepa.train_jepa import _encode
+
+    encoded: dict[str, torch.Tensor] = {}
+    for index, branches in enumerate(groups, start=1):
+        inputs = processor(images=[branches[0].current_image()], return_tensors="pt")
+        with torch.inference_mode():
+            tokens = _encode(
+                vision,
+                "online",
+                inputs["pixel_values"].to(device),
+                inputs["image_grid_thw"].to(device),
+            )
+        fixed = qwen_tokens_to_fixed_grid(
+            tokens, inputs["image_grid_thw"][0], grid_size
+        )
+        encoded[branches[0].bundle_id] = fixed.to(device="cpu", dtype=torch.bfloat16)
+        if progress is not None and (index == len(groups) or index % 100 == 0):
+            progress(
+                {
+                    "event": "qwen_feature_encoding",
+                    "completed_bundles": index,
+                    "total_bundles": len(groups),
+                }
+            )
+    return encoded
+
+
+def validate_qwen_feature_cache(
+    cached: dict[str, Any],
+    key: str,
+    train_bundles: list[EncodedBundle],
+    validation_bundles: list[EncodedBundle],
+    grid_size: int,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    if cached.get("cache_key") != key:
+        raise ValueError("Qwen feature cache key mismatch")
+    train = cached.get("train")
+    validation = cached.get("validation")
+    if not isinstance(train, dict) or not isinstance(validation, dict):
+        raise ValueError("Qwen feature cache has invalid bundle maps")
+    expected_shape = (grid_size * grid_size, 2048)
+    for name, values, bundles in (
+        ("train", train, train_bundles),
+        ("validation", validation, validation_bundles),
+    ):
+        expected_ids = {bundle.bundle_id for bundle in bundles}
+        if set(values) != expected_ids:
+            raise ValueError(f"Qwen feature cache has the wrong {name} bundle IDs")
+        if not all(torch.is_tensor(value) and value.shape == expected_shape for value in values.values()):
+            raise ValueError(f"Qwen feature cache has invalid {name} tensor shapes")
+    return train, validation
+
+
+def attach_qwen_features(
+    bundles: list[EncodedBundle], values: dict[str, torch.Tensor]
+) -> None:
+    for bundle in bundles:
+        bundle.semantic_current = values[bundle.bundle_id]
+
+
 def _action_embedding(
     action_encoder: ActionEncoder,
     actions: list[dict[str, Any]],
@@ -186,7 +300,22 @@ def _predict_bundle_deltas(
     spatial: torch.Tensor,
     bundle: EncodedBundle,
     device: torch.device,
+    semantic_override: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    if getattr(predictor, "uses_semantic_features", False):
+        semantic = (
+            semantic_override
+            if semantic_override is not None
+            else getattr(bundle, "semantic_current", None)
+        )
+        if semantic is None:
+            raise ValueError("Fusion predictor received no Qwen semantic features")
+        return predictor(
+            current,
+            embeddings,
+            spatial,
+            semantic.to(device=device, dtype=torch.float32),
+        )
     if bundle.screen_positions is None:
         return predictor(current, embeddings, spatial)
     positions = bundle.screen_positions.to(device=device, dtype=torch.float32)
@@ -624,6 +753,7 @@ def evaluate_encoded_bundles(
                 spatial,
                 bundle,
                 device,
+                getattr(selected[(bundle_index + 1) % len(selected)], "semantic_current", None),
             )
             predictions, comparison_targets = prediction_space(
                 current,
@@ -872,6 +1002,7 @@ def train_vjepa2_gui_pilot(
 
     manifest = runtime_manifest(asdict(config), run_metadata)
     manifest["encoder_frozen"] = True
+    manifest["qwen_semantic_encoder_frozen"] = config.use_qwen_semantic_features
     write_json(output / "run_manifest.json", manifest)
     def report(value: dict[str, Any]) -> None:
         value = {"recorded_at_utc": utc_now(), **value}
@@ -924,6 +1055,90 @@ def train_vjepa2_gui_pilot(
             if persistence_callback is not None:
                 persistence_callback()
             report({"event": "feature_cache", "status": "saved", "cache_key": cache_key})
+
+    qwen_cache_hit = False
+    qwen_cache_key_value: str | None = None
+    if config.use_qwen_semantic_features:
+        from cua_jepa.train_jepa import JEPATrainConfig, _load_qwen_vision
+
+        qwen_cache_key_value = qwen_feature_cache_key(config, dataset_audit)
+        qwen_cache_path = (
+            Path(config.qwen_feature_cache_dir) / f"{qwen_cache_key_value}.pt"
+            if config.qwen_feature_cache_dir
+            else None
+        )
+        qwen_cache_hit = bool(qwen_cache_path and qwen_cache_path.is_file())
+        if qwen_cache_hit:
+            report(
+                {
+                    "event": "qwen_feature_cache",
+                    "status": "load",
+                    "cache_key": qwen_cache_key_value,
+                }
+            )
+            qwen_cached = torch.load(qwen_cache_path, map_location="cpu", weights_only=False)
+            qwen_train, qwen_validation = validate_qwen_feature_cache(
+                qwen_cached,
+                qwen_cache_key_value,
+                encoded_train,
+                encoded_validation,
+                config.qwen_semantic_grid_size,
+            )
+        else:
+            qwen_config = JEPATrainConfig(
+                model_id=config.qwen_model_id,
+                model_revision=config.qwen_model_revision,
+                train_qwen_lora=False,
+            )
+            qwen_processor, qwen_vision = _load_qwen_vision(qwen_config, device)
+            qwen_vision.requires_grad_(False).eval()
+            if any(parameter.requires_grad for parameter in qwen_vision.parameters()):
+                raise RuntimeError("The Qwen semantic encoder is not completely frozen")
+            report({"event": "phase", "phase": "encode_qwen_train"})
+            qwen_train = encode_qwen_semantic_bundles(
+                train_groups,
+                qwen_processor,
+                qwen_vision,
+                device,
+                config.qwen_semantic_grid_size,
+                report,
+            )
+            report({"event": "phase", "phase": "encode_qwen_validation"})
+            qwen_validation = encode_qwen_semantic_bundles(
+                validation_groups,
+                qwen_processor,
+                qwen_vision,
+                device,
+                config.qwen_semantic_grid_size,
+                report,
+            )
+            del qwen_vision, qwen_processor
+            gc.collect()
+            torch.cuda.empty_cache()
+            if qwen_cache_path is not None:
+                qwen_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_qwen_cache = qwen_cache_path.with_suffix(".incomplete")
+                torch.save(
+                    {
+                        "cache_key": qwen_cache_key_value,
+                        "train": qwen_train,
+                        "validation": qwen_validation,
+                    },
+                    temporary_qwen_cache,
+                )
+                temporary_qwen_cache.replace(qwen_cache_path)
+                if persistence_callback is not None:
+                    persistence_callback()
+                report(
+                    {
+                        "event": "qwen_feature_cache",
+                        "status": "saved",
+                        "cache_key": qwen_cache_key_value,
+                    }
+                )
+        attach_qwen_features(encoded_train, qwen_train)
+        attach_qwen_features(encoded_validation, qwen_validation)
+        del qwen_train, qwen_validation
     del train_groups, validation_groups, train_samples, validation_samples
     gc.collect()
     torch.cuda.empty_cache()
@@ -935,6 +1150,7 @@ def train_vjepa2_gui_pilot(
         "tiled_adaln_spatial": TiledActionConditionedPredictor,
         "independent_tiled_adaln_spatial": IndependentTiledActionConditionedPredictor,
         "visual_gated": VisualGatedActionConditionedPredictor,
+        "qwen_vjepa_fusion": QwenVJEPAFusionPredictor,
     }
     if config.predictor_architecture not in predictor_classes:
         raise ValueError(
@@ -1171,6 +1387,8 @@ def train_vjepa2_gui_pilot(
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
         "feature_cache_hit": cache_hit,
         "feature_cache_key": cache_key,
+        "qwen_feature_cache_hit": qwen_cache_hit,
+        "qwen_feature_cache_key": qwen_cache_key_value,
     }
     manifest["completed_at_utc"] = utc_now()
     manifest["completed_steps"] = step

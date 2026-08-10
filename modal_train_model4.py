@@ -380,11 +380,14 @@ def run_vjepa2_gui_pilot(
         "counterfactual_gated_smoke",
         "counterfactual_gated_scaled_pure",
         "counterfactual_gated_scaled_separation",
+        "qwen_fusion_smoke",
+        "qwen_fusion_scaled_separation",
     }:
         raise ValueError("Unsupported V-JEPA 2 GUI pilot mode")
     config = VJEPA2PilotConfig()
     config.memory_gib = 24.0
     config.feature_cache_dir = "/training/vjepa2-feature-cache"
+    config.qwen_feature_cache_dir = "/training/qwen-feature-cache"
     if seed:
         config.seed = seed
     if mode in {
@@ -394,6 +397,7 @@ def run_vjepa2_gui_pilot(
         "independent_tiled_smoke",
         "counterfactual_smoke",
         "counterfactual_gated_smoke",
+        "qwen_fusion_smoke",
     }:
         config.max_steps = 2
         config.max_train_transitions = 8
@@ -420,6 +424,10 @@ def run_vjepa2_gui_pilot(
             config.prediction_target_mode = "counterfactual_residual"
             config.predictor_architecture = "visual_gated"
             config.action_separation_weight = 0.0
+        elif mode == "qwen_fusion_smoke":
+            config.use_qwen_semantic_features = True
+            config.predictor_architecture = "qwen_vjepa_fusion"
+            config.action_separation_weight = 0.25
     elif mode == "pure":
         config.action_separation_weight = 0.0
     elif mode == "separation":
@@ -461,6 +469,10 @@ def run_vjepa2_gui_pilot(
             config.action_separation_weight = (
                 0.0 if mode == "counterfactual_gated_scaled_pure" else 0.25
             )
+        elif mode == "qwen_fusion_scaled_separation":
+            config.use_qwen_semantic_features = True
+            config.predictor_architecture = "qwen_vjepa_fusion"
+            config.action_separation_weight = 0.25
 
     if mode in {
         "scaled_separation",
@@ -472,6 +484,7 @@ def run_vjepa2_gui_pilot(
         "counterfactual_scaled_separation",
         "counterfactual_gated_scaled_pure",
         "counterfactual_gated_scaled_separation",
+        "qwen_fusion_scaled_separation",
     }:
         train_paths = [
             str(path) for path in sorted(Path("/dataset/model4-full/train").rglob("*.tar"))
@@ -569,6 +582,8 @@ def main(mode: str = "deps", seed: int = 0) -> None:
         "vjepa2_gui_counterfactual_gated_smoke",
         "vjepa2_gui_counterfactual_gated_scaled_pure",
         "vjepa2_gui_counterfactual_gated_scaled_separation",
+        "vjepa2_gui_qwen_fusion_smoke",
+        "vjepa2_gui_qwen_fusion_scaled_separation",
     }:
         vjepa2_mode = mode.removeprefix("vjepa2_gui_")
         metrics = run_vjepa2_gui_pilot.remote(

@@ -8,6 +8,7 @@ from cua_jepa.jepa_model import (
     TiledActionConditionedPredictor,
     IndependentTiledActionConditionedPredictor,
     VisualGatedActionConditionedPredictor,
+    QwenVJEPAFusionPredictor,
     action_separation_loss,
     action_spatial_features,
     actions_to_tensors,
@@ -74,6 +75,28 @@ def test_visual_gated_predictor_requires_visual_content() -> None:
     visual_predictions = predictor(torch.randn(6, 32), actions, spatial)
     assert visual_predictions.shape == (2, 6, 32)
     assert not torch.allclose(visual_predictions[0], visual_predictions[1])
+
+
+def test_qwen_vjepa_fusion_starts_as_base_predictor_and_gets_gate_gradients() -> None:
+    torch.manual_seed(17)
+    predictor = QwenVJEPAFusionPredictor(
+        latent_dim=32,
+        semantic_dim=24,
+        hidden_dim=32,
+        action_dim=32,
+        layers=2,
+        heads=4,
+    )
+    current = torch.randn(6, 32)
+    actions = torch.randn(2, 32)
+    spatial = torch.zeros(2, 6, 3)
+    semantic = torch.randn(8, 24)
+    first = predictor(current, actions, spatial, semantic)
+    changed_semantic = predictor(current, actions, spatial, semantic + 10.0)
+    assert torch.allclose(first, changed_semantic)
+    first.square().mean().backward()
+    assert predictor.cross_gates.grad is not None
+    assert torch.count_nonzero(predictor.cross_gates.grad) > 0
 
 
 def test_action_token_predictor_keeps_visual_shape_and_uses_action() -> None:

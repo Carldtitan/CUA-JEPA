@@ -15,6 +15,8 @@ from cua_jepa.train_vjepa2 import (
     pilot_success,
     prediction_space,
     prediction_target_weights,
+    qwen_feature_cache_key,
+    qwen_tokens_to_fixed_grid,
     select_balanced_encoded_bundles,
     two_tile_action_coordinates,
     two_tile_gui_images,
@@ -174,6 +176,23 @@ def test_frozen_feature_cache_key_changes_with_screen_view() -> None:
     letterbox = VJEPA2PilotConfig(screen_views="letterbox")
     tiles = VJEPA2PilotConfig(screen_views="two_tiles")
     assert encoded_feature_cache_key(letterbox, audit) != encoded_feature_cache_key(tiles, audit)
+
+
+def test_qwen_feature_cache_key_changes_with_semantic_grid() -> None:
+    audit = {
+        "train_tar_manifest": {"manifest_sha256": "train"},
+        "validation_tar_manifest": {"manifest_sha256": "validation"},
+    }
+    small = VJEPA2PilotConfig(qwen_semantic_grid_size=4)
+    large = VJEPA2PilotConfig(qwen_semantic_grid_size=8)
+    assert qwen_feature_cache_key(small, audit) != qwen_feature_cache_key(large, audit)
+
+
+def test_qwen_tokens_resize_to_fixed_semantic_grid() -> None:
+    tokens = torch.arange(24 * 32, dtype=torch.float32).reshape(24, 32)
+    fixed = qwen_tokens_to_fixed_grid(tokens, torch.tensor([1, 8, 12]), size=4)
+    assert fixed.shape == (16, 32)
+    assert torch.isfinite(fixed).all()
 
 
 def test_frozen_feature_cache_validator_rejects_wrong_count() -> None:
