@@ -10,6 +10,7 @@ from cua_jepa.jepa_data import TransitionSample
 from cua_jepa.train_jepa import (
     JEPATrainConfig,
     _set_adapter,
+    adapter_value_sha256,
     adapter_pair_max_difference,
     approved_vision_parameters,
     copy_online_adapter_to_target,
@@ -77,6 +78,16 @@ def test_target_adapter_uses_ema_without_gradients() -> None:
     assert torch.allclose(vision.adapters["target"].weight, torch.ones(2, 2))
     assert adapter_pair_max_difference(vision) == 1.0
     assert not vision.adapters["target"].weight.requires_grad
+
+
+def test_paired_adapter_hash_ignores_adapter_names() -> None:
+    vision = FakePeftVision()
+    with torch.no_grad():
+        vision.adapters["online"].weight.fill_(3.0)
+        vision.adapters["target"].weight.fill_(3.0)
+    assert adapter_value_sha256(vision, "online") == adapter_value_sha256(
+        vision, "target"
+    )
 
 
 def test_dataset_assignment_rejects_split_or_image_leakage() -> None:

@@ -163,6 +163,17 @@ def adapter_pair_max_difference(model: torch.nn.Module) -> float:
     return max(differences)
 
 
+def adapter_value_sha256(model: torch.nn.Module, adapter_name: str) -> str:
+    """Hash one adapter with a neutral name so paired adapters are comparable."""
+    marker = f".{adapter_name}."
+    values = (
+        (name.replace(marker, ".adapter."), parameter)
+        for name, parameter in model.named_parameters()
+        if marker in name
+    )
+    return named_tensors_sha256(values)
+
+
 def approved_vision_parameters(
     vision: torch.nn.Module, train_qwen_lora: bool
 ) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter], list[torch.nn.Parameter]]:
@@ -753,20 +764,12 @@ def train_model4_jepa(
             adapter_pair_max_difference(vision) if config.train_qwen_lora else None
         ),
         "initial_online_lora_sha256": (
-            named_tensors_sha256(
-                (name, parameter)
-                for name, parameter in vision.named_parameters()
-                if ".online." in name
-            )
+            adapter_value_sha256(vision, "online")
             if config.train_qwen_lora
             else None
         ),
         "initial_target_lora_sha256": (
-            named_tensors_sha256(
-                (name, parameter)
-                for name, parameter in vision.named_parameters()
-                if ".target." in name
-            )
+            adapter_value_sha256(vision, "target")
             if config.train_qwen_lora
             else None
         ),

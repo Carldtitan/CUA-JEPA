@@ -1313,3 +1313,11 @@ The following work is not complete:
 - **Simple explanation:** False action labels can damage the model. They do not measure simple GUI exposure cleanly.
 - **Correction:** Follow the agreed experiment file. Give all four branches the same fixed `NO_ACTION` input. Keep the data, architecture, steps, loss, and compute matched with Model 4.
 - **Status:** Corrected before any Model 3 GPU run. Unit tests enforce the fixed `NO_ACTION` input.
+
+### 150. The LoRA identity check included the adapter names
+
+- **Technical term:** Name-dependent state hashing.
+- **Mistake:** The artifact check hashed the parameter names `online` and `target` together with equal parameter values. The different names forced different hashes.
+- **Simple explanation:** The two LoRA adapters had equal numbers, but the check reported that they were different.
+- **Correction:** Replace the adapter name with one neutral name before hashing. Keep the direct maximum-value difference check.
+- **Status:** Corrected after the two-step Model 3 smoke found it. The smoke training completed. Its final artifact check failed, so it is not an approved run.
