@@ -106,6 +106,7 @@ class VJEPA2PilotConfig:
     qwen_feature_cache_dir: str | None = None
     qwen_feature_cache_version: int = 1
     dataset_split_strategy: str = "app_disjoint"
+    dataset_split_seed: int = 20260811
 
 
 def fusion_gate_metrics(predictor: torch.nn.Module) -> dict[str, Any]:
@@ -161,13 +162,18 @@ def encoded_feature_cache_key(
         "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
         "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
         "dataset_split_strategy": config.dataset_split_strategy,
+        "dataset_split_seed": config.dataset_split_seed,
     }
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def validate_encoded_feature_cache(
-    cached: dict[str, Any], key: str, config: VJEPA2PilotConfig
+    cached: dict[str, Any],
+    key: str,
+    config: VJEPA2PilotConfig,
+    expected_train_bundle_ids: list[str] | None = None,
+    expected_validation_bundle_ids: list[str] | None = None,
 ) -> tuple[list[EncodedBundle], list[EncodedBundle]]:
     if cached.get("cache_key") != key:
         raise ValueError("Frozen feature cache key mismatch")
@@ -189,6 +195,14 @@ def validate_encoded_feature_cache(
             for bundle in bundles
         ):
             raise ValueError(f"Frozen feature cache has invalid {name} tensor shapes")
+    if expected_train_bundle_ids is not None and [bundle.bundle_id for bundle in train] != (
+        expected_train_bundle_ids
+    ):
+        raise ValueError("Frozen feature cache has the wrong training bundle IDs")
+    if expected_validation_bundle_ids is not None and [
+        bundle.bundle_id for bundle in validation
+    ] != expected_validation_bundle_ids:
+        raise ValueError("Frozen feature cache has the wrong validation bundle IDs")
     return train, validation
 
 
@@ -205,6 +219,7 @@ def qwen_feature_cache_key(
         "train_manifest": dataset_audit["train_tar_manifest"]["manifest_sha256"],
         "validation_manifest": dataset_audit["validation_tar_manifest"]["manifest_sha256"],
         "dataset_split_strategy": config.dataset_split_strategy,
+        "dataset_split_seed": config.dataset_split_seed,
     }
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -1008,7 +1023,7 @@ def train_vjepa2_gui_pilot(
             all_train_samples,
             config.max_train_transitions // 4,
             config.max_validation_transitions // 4,
-            config.seed,
+            config.dataset_split_seed,
         )
         all_validation_samples: list[TransitionSample] = []
         validation_source_split = "train"
@@ -1037,6 +1052,7 @@ def train_vjepa2_gui_pilot(
         "train_tar_manifest": tar_file_manifest(train_tar_paths, "train"),
         "validation_tar_manifest": tar_file_manifest(validation_tar_paths, "validation"),
         "split_strategy": config.dataset_split_strategy,
+        "split_seed": config.dataset_split_seed,
     }
     write_json(output / "dataset_audit.json", dataset_audit)
     if len(train_groups) * 4 != len(train_samples):
@@ -1063,7 +1079,11 @@ def train_vjepa2_gui_pilot(
         report({"event": "feature_cache", "status": "load", "cache_key": cache_key})
         cached = torch.load(cache_path, map_location="cpu", weights_only=False)
         encoded_train, encoded_validation = validate_encoded_feature_cache(
-            cached, cache_key, config
+            cached,
+            cache_key,
+            config,
+            [branches[0].bundle_id for branches in train_groups],
+            [branches[0].bundle_id for branches in validation_groups],
         )
     else:
         processor = AutoVideoProcessor.from_pretrained(

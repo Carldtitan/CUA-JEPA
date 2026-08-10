@@ -1040,7 +1040,7 @@ The following work is not complete:
 - **Mistake:** We used only Jira and Slack for validation. The model trained on eight different applications. A low score can mean weak action learning, weak transfer to new software, or both.
 - **Simple explanation:** The test changed the software and the action result at the same time. We could not tell which change caused the error.
 - **Correction:** Keep Jira and Slack as the main unseen-application validation. Add a separate diagnostic that holds out complete bundles from the eight training applications. Use no shared bundle IDs or exact screenshots.
-- **Status:** Implemented in code. All 70 local tests pass. Modal smoke and scaled tests are pending.
+- **Status:** Corrected and tested. The scaled same-app result reached 69.6% overall, 55.9% on clicks, and 66.3% on large changes. A wrong action reduced accuracy by 58 points. A wrong screen reduced it by 42.4 points. The run passed every success check.
 
 ### 116. The first same-app selector passed nested bundle lists
 
@@ -1049,3 +1049,11 @@ The following work is not complete:
 - **Simple explanation:** The function received boxes of records when it expected records.
 - **Correction:** Flatten the bundle lists before balanced selection. Keep a unit test that checks a deterministic and disjoint result.
 - **Status:** Corrected before any Modal run. No GPU time or data was affected.
+
+### 117. The model seed also changed the same-app validation data
+
+- **Technical term:** Random-seed confounding.
+- **Mistake:** The same seed controlled model initialization and the held-out bundle selection.
+- **Simple explanation:** A repeat with a new model seed would also use different test examples. That is not a clean repeat.
+- **Correction:** Use a fixed data-split seed. Use a separate model seed. Put the split seed in the cache key and data audit. Validate the exact cached bundle IDs before reuse.
+- **Status:** Corrected before the repeat run. The first result used split seed 20260811. Later model seeds will use the same held-out bundles.

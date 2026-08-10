@@ -193,6 +193,16 @@ def test_frozen_feature_cache_key_changes_with_split_strategy() -> None:
     )
 
 
+def test_frozen_feature_cache_key_changes_with_split_seed() -> None:
+    audit = {
+        "train_tar_manifest": {"manifest_sha256": "train"},
+        "validation_tar_manifest": {"manifest_sha256": "validation"},
+    }
+    first = VJEPA2PilotConfig(dataset_split_seed=1)
+    second = VJEPA2PilotConfig(dataset_split_seed=2)
+    assert encoded_feature_cache_key(first, audit) != encoded_feature_cache_key(second, audit)
+
+
 def test_qwen_feature_cache_key_changes_with_semantic_grid() -> None:
     audit = {
         "train_tar_manifest": {"manifest_sha256": "train"},
@@ -240,6 +250,27 @@ def test_frozen_feature_cache_validator_rejects_wrong_count() -> None:
         assert "count" in str(error).lower()
     else:
         raise AssertionError("An incomplete frozen feature cache was accepted")
+
+
+def test_frozen_feature_cache_validator_rejects_wrong_bundle_ids() -> None:
+    config = VJEPA2PilotConfig(max_train_transitions=4, max_validation_transitions=4)
+    cached = {
+        "cache_key": "key",
+        "train": [_bundle("wrong-train", "jira")],
+        "validation": [_bundle("right-validation", "slack")],
+    }
+    try:
+        validate_encoded_feature_cache(
+            cached,
+            "key",
+            config,
+            expected_train_bundle_ids=["right-train"],
+            expected_validation_bundle_ids=["right-validation"],
+        )
+    except ValueError as error:
+        assert "bundle ids" in str(error).lower()
+    else:
+        raise AssertionError("A cache with the wrong bundles was accepted")
 
 
 def test_pilot_success_requires_each_difficult_group() -> None:
