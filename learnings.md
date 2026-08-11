@@ -1521,3 +1521,19 @@ The following work is not complete:
 - **Simple explanation:** A few examples had no usable action. One part of the evaluator ignored them, but another part still counted them.
 - **Correction:** Record an empty candidate set as a failed decision with score zero for every reranker control. Keep the example in all metrics and paired comparisons.
 - **Status:** Corrected after the first full scorer reached final evaluation. The scorer must run again because the failed run stopped before it saved the trained heads.
+
+### 176. A Windows folder download created one combined file
+
+- **Technical term:** Artifact-transfer path semantics.
+- **Mistake:** The first Modal volume download gave a remote folder and a new Windows destination path. The client created one combined local file instead of a directory tree.
+- **Simple explanation:** The download finished, but the local layout was wrong and could not be used as model files.
+- **Correction:** Create explicit local directories. Download every required remote file by its exact name. Parse all JSON files, count all JSONL rows, hash all checkpoints, and check every saved tensor for finite values.
+- **Status:** Corrected. Verified local artifacts are in the four `*-files` directories under `artifacts/model6`.
+
+### 177. The README still described completed SFT runs as future work
+
+- **Technical term:** Documentation-state drift.
+- **Mistake:** The README still said not to start the full paired SFT runs, although those runs and their report were complete.
+- **Simple explanation:** The main project page showed an old project state.
+- **Correction:** Link the completed SFT report. Add Model 6 as the latest experiment and state its negative result directly.
+- **Status:** Corrected with the final Model 6 report.

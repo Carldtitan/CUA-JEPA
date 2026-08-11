@@ -8,6 +8,14 @@ The project learning log records mistakes, corrections, evidence, and open limit
 
 The full-run measurement plan is in [full_run_observability.md](full_run_observability.md).
 
+## Latest experiment: Model 6
+
+Model 6 keeps Qwen and V-JEPA 2 frozen. It uses a separate JEPA predictor to simulate candidate actions in latent space. A small goal-conditioned scorer then selects one candidate.
+
+Model 6 did not improve action accuracy. Raw Qwen scored 40.8%. Model 6 scored 40.8% and 40.4% across two scorer seeds. The action-only controls scored 42.8% and 42.4%. The shuffled-future control scored 44.0% in both seeds.
+
+The latent simulation was fast, but the predicted futures did not add decision value. See [the complete Model 6 design and result](model6.md).
+
 The observability gate passed a two-step Modal test at commit `27af5ff`. The run ID was `model4-lora_smoke-seed20260809-20260810T052238Z`.
 
 ## Dataset milestone
@@ -216,4 +224,4 @@ python -m modal run --detach modal_train_sft.py --variant both --mode smoke
 python -m modal run --detach modal_train_sft.py --variant both --mode pilot
 ```
 
-Do not start the full pair until both pilots pass their data, gradient, generation, and artifact checks.
+The full paired SFT runs are complete. See [the SFT results](sft_full_results.md).

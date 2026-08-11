@@ -88,12 +88,73 @@ The forward score is above chance, but it is not strong. An older frozen V-JEPA 
 
 ## Decision result
 
-The full decision result is pending. Do not use the two-example scorer smoke score as research evidence.
+Model 6 did not improve Qwen's action choice.
+
+| System | Seed 20260813 | Seed 20260814 |
+|---|---:|---:|
+| Raw Qwen greedy | 40.8% | 40.8% |
+| Model 6 future scorer | 40.8% | 40.4% |
+| Action-only control | 42.8% | 42.4% |
+| Shuffled-future control | 44.0% | 44.0% |
+
+For seed 20260813, Model 6 minus raw Qwen was 0.0 percentage points. The task-bootstrap 95% interval was -4.35 to +4.38 points.
+
+For seed 20260814, Model 6 minus raw Qwen was -0.4 points. The task-bootstrap 95% interval was -4.82 to +3.92 points.
+
+Both intervals include zero. There is no reliable improvement.
+
+The shuffled-future control beat Model 6 in both seeds. This is strong evidence that the predicted future did not give the scorer useful decision information.
+
+## Candidate result
+
+On the 250 untouched validation examples:
+
+- raw Qwen exact success was 40.8%;
+- exact candidate recall at 4 was 54.4%;
+- any-positive candidate recall was 56.8%;
+- mean unique candidate count was 3.52;
+- 76.0% of examples had four unique candidates;
+- no validation oracle was inserted.
+
+The 54.4% candidate recall was the maximum exact score available to any reranker.
+
+## Inference measurements
+
+The frozen feature cache measured 21.21 ms for V-JEPA 2 screen encoding and 1.20 ms for goal-text encoding per example.
+
+Across the two full scorer seeds:
+
+- batched JEPA prediction took 5.25 to 6.69 ms per candidate set;
+- all three scorer controls together took 1.12 to 1.63 ms per candidate set;
+- peak scorer GPU memory was 0.13 GiB.
+
+The latent simulation is cheap. Candidate generation is not cheap. Raw Qwen greedy generation averaged 1.12 seconds. The batch of seven sampled candidates averaged 2.80 seconds.
+
+## Research conclusion
+
+Model 6 answered the main question with a negative result.
+
+The separate JEPA world model learned measurable action dynamics. It also ran quickly. However, its predicted future latent states did not improve next-action selection on AgentNet.
+
+Do not claim that Model 6 improves accuracy. The defensible result is:
+
+1. Separate latent simulation avoided damage to Qwen.
+2. Latent counterfactual prediction was much faster than Qwen candidate generation.
+3. The present future representation and scorer did not add decision value.
 
 ## Saved locations
 
 - Dynamics run: `/training/model6-dynamics-full-seed20260813-20260811T052443Z`
-- Active candidate run: `/training/model6-candidates-raw-qwen-seed20260813-20260811T055037Z`
+- Candidate run: `/training/model6-candidates-raw-qwen-seed20260813-20260811T055037Z`
+- Scorer seed 20260813: `/training/model6-scorer-seed20260813-20260811T085544Z`
+- Scorer seed 20260814: `/training/model6-scorer-seed20260814-20260811T085917Z`
 - Modal volume: `cua-jepa-training-v1`
 
-The full result must also be copied to the local `artifacts` directory after training.
+Verified local copies are in:
+
+- `artifacts/model6/dynamics-files`;
+- `artifacts/model6/candidates-files`;
+- `artifacts/model6/scorer-seed20260813-files`;
+- `artifacts/model6/scorer-seed20260814-files`.
+
+The trained dynamics checkpoint is about 70 MB. Each trained scorer checkpoint is about 3.8 MB.
