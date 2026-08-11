@@ -1457,3 +1457,11 @@ The following work is not complete:
 - **Simple explanation:** One label could show the wrong characters.
 - **Correction:** Use a plain ASCII hyphen in generated labels. Check the final images after regeneration.
 - **Status:** Corrected before delivery.
+
+### 168. The first Model 6 Modal command used the Windows legacy text encoding
+
+- **Technical term:** Console character-encoding failure.
+- **Mistake:** The first Model 6 smoke command did not enable UTF-8 output. Modal tried to print a checkmark that the Windows console encoding could not represent.
+- **Simple explanation:** The command stopped before it started the GPU because Windows could not print one character.
+- **Correction:** Set `PYTHONUTF8=1` for Model 6 Modal commands.
+- **Status:** Corrected before the first Model 6 GPU smoke test. No GPU cost was used by the failed command.
