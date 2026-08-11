@@ -1,0 +1,4 @@
+model,initial_exact_success,final_exact_success,final_mean_action_score,sft_elapsed_seconds,sft_cost_usd,sft_peak_gpu_gib,jepa_final_four_way_accuracy,jepa_cost_usd
+Model 2,0.408,0.512,0.5247251967508146,3137.536076995,1.6935164729188212,13.REDACTED,,0
+Model 3,0.148,0.188,0.19131652661064424,2895.2044256550003,1.562715540791543,13.REDACTED,0.245,2.REDACTED
+Model 4,0.136,0.184,0.18561538461538463,3152.512825966,1.7016003229434082,13.REDACTED,0.38,2.4724091444500718

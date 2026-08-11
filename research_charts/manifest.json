@@ -1,0 +1,401 @@
+{
+  "chart_count": 49,
+  "charts": [
+    {
+      "file": "01-final-exact-success.png",
+      "title": "Final computer-use accuracy",
+      "description": "Model 2 clearly outperformed both JEPA-transfer models.",
+      "sources": [
+        "SFT final_metrics.json"
+      ]
+    },
+    {
+      "file": "02-sft-before-after.png",
+      "title": "What SFT added to each starting point",
+      "description": "SFT helped all models, but it did not repair the large JEPA transfer loss.",
+      "sources": [
+        "SFT initial_validation",
+        "SFT final_validation"
+      ]
+    },
+    {
+      "file": "03-final-metric-profile.png",
+      "title": "Final policy metric profile",
+      "description": "All models produced valid JSON, but the JEPA models often chose the wrong action or location.",
+      "sources": [
+        "SFT final_validation_metrics.json"
+      ]
+    },
+    {
+      "file": "04-coordinate-precision.png",
+      "title": "Click precision at three tolerances",
+      "description": "Model 2 found screen locations much more accurately at every tolerance.",
+      "sources": [
+        "SFT final_validation coordinate metrics"
+      ]
+    },
+    {
+      "file": "05-action-score-by-type.png",
+      "title": "Final quality by GUI action type",
+      "description": "Click dominates the dataset. Rare-action scores are unstable because their sample counts are small.",
+      "sources": [
+        "SFT final_validation by_action"
+      ]
+    },
+    {
+      "file": "06-action-type-accuracy.png",
+      "title": "Did the model choose the correct kind of action?",
+      "description": "Model 2 was strongest overall. All models were weak on several rare actions.",
+      "sources": [
+        "SFT final_validation by_action"
+      ]
+    },
+    {
+      "file": "07-score-by-operating-system.png",
+      "title": "Final policy score by operating system",
+      "description": "Model 2 led on macOS, Ubuntu, and Windows.",
+      "sources": [
+        "SFT final_validation by_system"
+      ]
+    },
+    {
+      "file": "08-score-by-domain.png",
+      "title": "Final policy score by software domain",
+      "description": "The right panel shows sample size so that small-domain results are not mistaken for stable estimates.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "09-action-confusion-matrices.png",
+      "title": "Which actions were confused?",
+      "description": "Rows are the correct actions. Columns are the model outputs. Values are percentages within each row.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "10-example-score-distribution.png",
+      "title": "Distribution of final per-example scores",
+      "description": "Model 2 produced many more fully correct actions.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "11-coordinate-distance-cdf.png",
+      "title": "Coordinate error distribution when the action type was correct",
+      "description": "The Model 2 curve rises earlier, which means its predicted locations were closer to the targets.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "12-small-monitor-trajectory.png",
+      "title": "Small live-monitor trajectory",
+      "description": "This monitor was easier than the full validation set. It is a health signal, not the final result.",
+      "sources": [
+        "SFT monitor_step metrics; 32 examples"
+      ]
+    },
+    {
+      "file": "13-sft-training-loss.png",
+      "title": "SFT training loss",
+      "description": "Model 2 had the lowest overall training loss. Curves use a five-record moving average.",
+      "sources": [
+        "SFT train_metrics.jsonl"
+      ]
+    },
+    {
+      "file": "14-sft-loss-reduction.png",
+      "title": "Loss reduction during SFT",
+      "description": "All models learned the supervised format, but lower training loss did not remove the JEPA transfer gap.",
+      "sources": [
+        "SFT final_metrics.json"
+      ]
+    },
+    {
+      "file": "15-sft-gradient-norms.png",
+      "title": "Visual and language LoRA gradient norms",
+      "description": "Both adapter parts received gradients throughout training. The poor JEPA result was not caused by zero gradients.",
+      "sources": [
+        "SFT train_metrics.jsonl"
+      ]
+    },
+    {
+      "file": "16-sft-learning-rate.png",
+      "title": "Matched SFT learning-rate schedule",
+      "description": "The three runs used the same warmup and cosine decay schedule.",
+      "sources": [
+        "SFT train_metrics.jsonl"
+      ]
+    },
+    {
+      "file": "17-sft-gpu-memory.png",
+      "title": "SFT GPU memory use",
+      "description": "Each full SFT run peaked at 13.84 GiB on a 24 GiB L4 GPU.",
+      "sources": [
+        "SFT train_metrics.jsonl",
+        "Modal L4 specification"
+      ]
+    },
+    {
+      "file": "18-sft-time-cost-memory.png",
+      "title": "SFT time, cost, and peak GPU memory",
+      "description": "Resource use was almost equal, which supports the fairness of the model comparison.",
+      "sources": [
+        "SFT final_metrics.json"
+      ]
+    },
+    {
+      "file": "19-sft-trainable-parameters.png",
+      "title": "Trainable SFT parameter allocation",
+      "description": "All three models trained the same number of adapter parameters. Base Qwen parameters were frozen.",
+      "sources": [
+        "SFT initialization_audit.json"
+      ]
+    },
+    {
+      "file": "20-sft-loss-by-action.png",
+      "title": "Training difficulty by action type",
+      "description": "Writing and rare actions were often harder than ordinary clicks.",
+      "sources": [
+        "SFT train_metrics.jsonl"
+      ]
+    },
+    {
+      "file": "21-paired-example-outcomes.png",
+      "title": "Paired wins and ties on the same 250 examples",
+      "description": "Most Model 3 versus Model 4 examples were ties. Model 2 had many more wins against both.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "22-final-error-decomposition.png",
+      "title": "Where final policy errors came from",
+      "description": "All outputs parsed. The main failures were wrong action types and wrong action details.",
+      "sources": [
+        "SFT final_validation_predictions.jsonl"
+      ]
+    },
+    {
+      "file": "23-data-action-mix.png",
+      "title": "Action distribution in the SFT data",
+      "description": "Clicks were 65% of training data. Scroll had only 6 training and 2 validation examples.",
+      "sources": [
+        "AgentNet dataset_audit.json"
+      ]
+    },
+    {
+      "file": "24-data-os-balance.png",
+      "title": "Operating-system balance",
+      "description": "Train and validation data were nearly equal across macOS, Ubuntu, and Windows.",
+      "sources": [
+        "AgentNet dataset_audit.json"
+      ]
+    },
+    {
+      "file": "25-data-domain-mix.png",
+      "title": "Largest software domains in the SFT data",
+      "description": "The data covered many domains, but the distribution was not uniform.",
+      "sources": [
+        "AgentNet dataset_audit.json"
+      ]
+    },
+    {
+      "file": "26-data-selection-rate.png",
+      "title": "Sampling rate by action type",
+      "description": "Rare actions were sampled more heavily than clicks, but some still had very small absolute counts.",
+      "sources": [
+        "AgentNet candidate and selected counts"
+      ]
+    },
+    {
+      "file": "27-dataset-integrity.png",
+      "title": "Dataset integrity checks",
+      "description": "The saved SFT dataset had no missing images, duplicates, or exact split overlap.",
+      "sources": [
+        "AgentNet dataset_audit.json"
+      ]
+    },
+    {
+      "file": "28-jepa-before-after-accuracy.png",
+      "title": "What JEPA training changed",
+      "description": "Action-conditioned Model 4 improved future matching. The no-action control remained at chance.",
+      "sources": [
+        "JEPA final_metrics.json"
+      ]
+    },
+    {
+      "file": "29-jepa-accuracy-curve.png",
+      "title": "JEPA future-screen accuracy over training",
+      "description": "Only the action-conditioned model moved clearly above chance.",
+      "sources": [
+        "JEPA evaluation_checkpoints.jsonl"
+      ]
+    },
+    {
+      "file": "30-jepa-loss-curves.png",
+      "title": "JEPA training losses",
+      "description": "Both runs reduced latent regression loss. Model 4 also optimized action separation.",
+      "sources": [
+        "JEPA train.jsonl"
+      ]
+    },
+    {
+      "file": "31-jepa-loss-components.png",
+      "title": "JEPA objective components",
+      "description": "Model 3 correctly had zero action-separation loss. Model 4 paid a large action-separation term.",
+      "sources": [
+        "JEPA final_metrics.json"
+      ]
+    },
+    {
+      "file": "32-jepa-action-sensitivity.png",
+      "title": "How much correct action information helped JEPA prediction",
+      "description": "A positive gap means correct actions produced closer predictions. Model 4 developed a small positive gap.",
+      "sources": [
+        "JEPA evaluation_checkpoints.jsonl"
+      ]
+    },
+    {
+      "file": "33-jepa-representation-variance.png",
+      "title": "Target and predicted representation variance",
+      "description": "Model 4's final predicted variance was very small even though target variance remained substantial.",
+      "sources": [
+        "JEPA evaluation_checkpoints.jsonl"
+      ]
+    },
+    {
+      "file": "34-jepa-accuracy-by-screen-change.png",
+      "title": "JEPA accuracy by amount of screen change",
+      "description": "Action-conditioned performance varied strongly with how much of the screen changed.",
+      "sources": [
+        "JEPA final_validation by_changed_pixel_bucket"
+      ]
+    },
+    {
+      "file": "35-jepa-time-breakdown.png",
+      "title": "JEPA runtime by phase",
+      "description": "Training dominated the JEPA wall time. Final evaluation was the next largest phase.",
+      "sources": [
+        "JEPA final_metrics timing"
+      ]
+    },
+    {
+      "file": "36-jepa-resource-efficiency.png",
+      "title": "JEPA resource use",
+      "description": "The matched no-action and action-conditioned Qwen JEPA runs used similar resources.",
+      "sources": [
+        "JEPA final_metrics.json"
+      ]
+    },
+    {
+      "file": "37-jepa-parameter-composition.png",
+      "title": "JEPA adapter and head parameter composition",
+      "description": "The two JEPA controls had matched parameter counts. The full Qwen base remained frozen.",
+      "sources": [
+        "JEPA final_metrics parameter fields"
+      ]
+    },
+    {
+      "file": "38-jepa-pilot-landscape.png",
+      "title": "JEPA architecture search results",
+      "description": "Grey same-app diagnostics used an easier test and are not directly comparable with held-out-app runs.",
+      "sources": [
+        "All saved JEPA final_metrics.json files"
+      ]
+    },
+    {
+      "file": "39-vjepa-seed-reliability.png",
+      "title": "Variation across repeated V-JEPA pilot seeds",
+      "description": "Dots are individual seeds. Orange lines are two-seed means. Two seeds are still too few for a stable estimate.",
+      "sources": [
+        "Repeated V-JEPA final_metrics.json files"
+      ]
+    },
+    {
+      "file": "40-model4-minus-model2-by-action.png",
+      "title": "Where action-conditioned JEPA lost or gained against Model 2",
+      "description": "Model 4 lost most heavily on clicks. Tiny positive values on rare actions are not stable evidence.",
+      "sources": [
+        "Paired SFT bootstrap comparison"
+      ]
+    },
+    {
+      "file": "41-core-training-cost.png",
+      "title": "Core training cost per model",
+      "description": "This is training cost, not inference cost. Inference latency and cost were not measured.",
+      "sources": [
+        "JEPA and SFT final_metrics cost estimates"
+      ]
+    },
+    {
+      "file": "42-model-pipeline-outcome.png",
+      "title": "How each model reached its final policy score",
+      "description": "The higher Model 4 JEPA score did not transfer into a better computer-use policy.",
+      "sources": [
+        "JEPA and SFT final_metrics.json"
+      ]
+    },
+    {
+      "file": "43-research-evidence-scorecard.png",
+      "title": "Which parts of the original thesis were tested?",
+      "description": "The MVP tested accuracy and action conditioning. It did not yet test inference cost or annotation cost.",
+      "sources": [
+        "Triplet audit",
+        "SFT results",
+        "Recorded experiment scope"
+      ]
+    },
+    {
+      "file": "44-memory-summary.png",
+      "title": "GPU memory and allocated host RAM",
+      "description": "GPU memory was measured. Host RAM is the Modal allocation, not measured resident usage.",
+      "sources": [
+        "JEPA/SFT metrics and Modal function settings"
+      ]
+    },
+    {
+      "file": "45-synthetic-jepa-action-mix.png",
+      "title": "Action mix in the synthetic JEPA data",
+      "description": "Clicks dominate both splits. Typing and scrolling supply smaller action groups.",
+      "sources": [
+        "Model 4 dataset_audit.json"
+      ]
+    },
+    {
+      "file": "46-synthetic-jepa-application-split.png",
+      "title": "Applications used for JEPA training and validation",
+      "description": "Jira and Slack were held out from JEPA training. This tests transfer to unseen applications.",
+      "sources": [
+        "Model 4 dataset_audit.json"
+      ]
+    },
+    {
+      "file": "47-synthetic-jepa-screen-change.png",
+      "title": "How much each action changed the screen",
+      "description": "Validation actions changed more of the screen on average than training actions.",
+      "sources": [
+        "Model 4 dataset_audit.json"
+      ]
+    },
+    {
+      "file": "48-synthetic-jepa-data-scale.png",
+      "title": "Synthetic JEPA data used by the full runs",
+      "description": "Both full JEPA runs used 30,668 training transitions and 2,000 validation transitions.",
+      "sources": [
+        "Model 4 dataset_audit.json"
+      ]
+    },
+    {
+      "file": "49-synthetic-jepa-split-integrity.png",
+      "title": "JEPA train and validation split checks",
+      "description": "The split prevents exact screen reuse and holds out two complete applications.",
+      "sources": [
+        "Model 4 dataset_audit.json"
+      ]
+    }
+  ]
+}
