@@ -463,6 +463,47 @@ def generate_model6_candidates(
 
 @app.function(
     image=image,
+    cpu=1,
+    memory=512,
+    timeout=5 * 60,
+    volumes={"/training": training_volume},
+)
+def audit_model6_candidates(candidate_run_id: str) -> dict:
+    from collections import Counter
+
+    from cua_jepa.model6_data import candidate_generation_metrics
+
+    candidate_path = Path("/training") / candidate_run_id / "candidates.jsonl"
+    if not candidate_path.is_file():
+        raise RuntimeError(f"Model 6 candidates are missing: {candidate_path}")
+    records = [
+        json.loads(line) for line in candidate_path.read_text(encoding="utf-8").splitlines()
+    ]
+    by_split = {}
+    for split in sorted({record["split"] for record in records}):
+        values = [record for record in records if record["split"] == split]
+        by_split[split] = candidate_generation_metrics(values)
+    return {
+        "candidate_run_id": candidate_run_id,
+        "saved_examples": len(records),
+        "by_split": by_split,
+        "candidate_count_distribution": dict(
+            sorted(Counter(record["candidate_count"] for record in records).items())
+        ),
+        "candidate_action_distribution": dict(
+            sorted(
+                Counter(
+                    candidate["action"].get("action", "unknown")
+                    for record in records
+                    for candidate in record["candidates"]
+                ).items()
+            )
+        ),
+    }
+
+
+@app.function(
+    image=image,
     gpu="L4",
     cpu=4,
     memory=24_576,
@@ -717,6 +758,10 @@ def main(
             cost_limit_usd,
             resume_run_id,
         )
+    elif mode == "candidate_audit":
+        if not candidate_run_id:
+            raise ValueError("Candidate audit mode requires a candidate run ID")
+        result = audit_model6_candidates.remote(candidate_run_id)
     elif mode in {"scorer_smoke", "scorer"}:
         if not dynamics_run_id or not candidate_run_id:
             raise ValueError("Scorer mode requires dynamics and candidate run IDs")
