@@ -1,4 +1,5 @@
 from cua_jepa.train_model6_scorer import (
+    _empty_selected_record,
     _latency_summary,
     binary_auc,
     paired_task_bootstrap,
@@ -92,3 +93,17 @@ def test_model6_paired_bootstrap_resamples_complete_tasks() -> None:
     comparison = result["comparisons"]["qwen_greedy"]
     assert comparison["model6_minus_control_mean_action_score"] == 1.0
     assert comparison["mean_action_score_ci95"] == [1.0, 1.0]
+
+
+def test_model6_empty_candidate_set_is_a_failed_decision() -> None:
+    record = {
+        "example_id": "empty",
+        "task_id": "task-empty",
+        "target_action": {"action": "click", "x": 0.5, "y": 0.5},
+        "system": "Ubuntu",
+        "domain": "test",
+    }
+    result = _empty_selected_record(record, "model6_future")
+    assert result["selected_action_score"] == 0.0
+    assert result["selected_exact"] is False
+    assert result["candidate_count"] == 0

@@ -1513,3 +1513,11 @@ The following work is not complete:
 - **Simple explanation:** The cloud job still depended on the laptop connection.
 - **Correction:** Use `modal run --detach` for long runs. Keep the saved-prefix resume system as a second safety control.
 - **Status:** Corrected before the resumed candidate run.
+
+### 175. Empty Qwen candidate sets broke the final paired comparison
+
+- **Technical term:** Evaluation-set cardinality mismatch.
+- **Mistake:** The scorer skipped examples where all Qwen outputs failed to parse. The final paired bootstrap still required one result for every validation example.
+- **Simple explanation:** A few examples had no usable action. One part of the evaluator ignored them, but another part still counted them.
+- **Correction:** Record an empty candidate set as a failed decision with score zero for every reranker control. Keep the example in all metrics and paired comparisons.
+- **Status:** Corrected after the first full scorer reached final evaluation. The scorer must run again because the failed run stopped before it saved the trained heads.

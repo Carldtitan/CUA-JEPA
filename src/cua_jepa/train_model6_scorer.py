@@ -84,6 +84,27 @@ def _selected_record(
     }
 
 
+def _empty_selected_record(record: dict[str, Any], system: str) -> dict[str, Any]:
+    """Record a failed decision when Qwen produced no valid candidate."""
+
+    return {
+        "example_id": record["example_id"],
+        "task_id": record["task_id"],
+        "system_name": system,
+        "selected_index": None,
+        "selected_action_score": 0.0,
+        "selected_exact": False,
+        "candidate_count": 0,
+        "oracle_action_score": 0.0,
+        "target_action": str(record["target_action"].get("action", "unknown")),
+        "target_dynamics_supported": policy_action_to_dynamics(record["target_action"])[1],
+        "operating_system": record.get("system", "unknown"),
+        "domain": record.get("domain", "unknown"),
+        "candidate_logits": [],
+        "candidate_labels": [],
+    }
+
+
 def summarize_selection(records: list[dict[str, Any]]) -> dict[str, Any]:
     if not records:
         raise ValueError("No Model 6 selection records were provided")
@@ -293,6 +314,10 @@ def evaluate_model6_scorers(
     with torch.inference_mode():
         for record in records:
             if not record["candidates"]:
+                outputs.extend(
+                    _empty_selected_record(record, system)
+                    for system in ("model6_future", "action_only", "shuffled_future")
+                )
                 continue
             feature = features[record["example_id"]]
             actions = [value["dynamics_action"] for value in record["candidates"]]
