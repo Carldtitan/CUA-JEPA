@@ -1473,3 +1473,11 @@ The following work is not complete:
 - **Simple explanation:** The world model has not seen every action that Qwen can propose.
 - **Correction:** Convert related pointer actions to the click representation. Mark each candidate as supported or unsupported. Report results for all examples and for the trained-action subset.
 - **Status:** Corrected in the Model 6 candidate schema before candidate generation.
+
+### 170. Frozen Model 6 outputs kept the PyTorch inference-tensor state
+
+- **Technical term:** Inference-tensor autograd incompatibility.
+- **Mistake:** The frozen JEPA runtime returned tensors made inside `torch.inference_mode()`. The trainable scorer could not save these tensors for its backward pass.
+- **Simple explanation:** The scorer received a type of tensor that PyTorch does not permit during training.
+- **Correction:** Clone the predicted futures and action embeddings after inference mode ends. This makes normal detached tensors. Add tests that check both returned tensors.
+- **Status:** Corrected after the scorer smoke test. The full scorer run did not start.

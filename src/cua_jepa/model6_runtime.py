@@ -106,4 +106,6 @@ def predict_candidate_futures(
         target_current = target_adapter(current)
         predicted_delta = predictor(online_current, embeddings, spatial)
         predicted_futures = target_current.unsqueeze(0) + predicted_delta
-    return predicted_futures, embeddings
+    # Tensors made in inference mode cannot be inputs to trainable scorer
+    # layers. Clone after the context so these are ordinary detached tensors.
+    return predicted_futures.clone(), embeddings.clone()

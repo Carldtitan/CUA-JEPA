@@ -64,3 +64,5 @@ def test_model6_runtime_batches_candidate_futures(tmp_path: Path) -> None:
     )
     assert futures.shape == (2, 256, 1024)
     assert actions.shape == (2, 8)
+    assert not futures.is_inference()
+    assert not actions.is_inference()
