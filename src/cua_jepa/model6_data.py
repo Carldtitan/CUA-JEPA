@@ -10,6 +10,40 @@ from typing import Any, Iterable
 from cua_jepa.sft_eval import parse_action_prediction, score_action
 
 
+SUPPORTED_DYNAMICS_ACTIONS = {"click", "write", "scroll"}
+
+
+def policy_action_to_dynamics(action: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Convert a Qwen policy action to the smaller synthetic dynamics action space."""
+
+    kind = str(action.get("action", ""))
+    supported = kind in SUPPORTED_DYNAMICS_ACTIONS
+    if kind in {"click", "double_click", "right_click", "moveTo", "dragTo"}:
+        return {
+            "kind": "click",
+            "x_normalized": float(action.get("x", 0.0) or 0.0),
+            "y_normalized": float(action.get("y", 0.0) or 0.0),
+        }, supported
+    if kind == "write":
+        return {
+            "kind": "type",
+            "text": str(action.get("text", "")),
+            "x_normalized": 0.0,
+            "y_normalized": 0.0,
+        }, supported
+    if kind == "scroll":
+        return {
+            "kind": "scroll",
+            "delta_y": float(action.get("amount", 0.0) or 0.0),
+        }, supported
+    if kind in {"press", "hotkey"}:
+        return {
+            "kind": "press",
+            "text": "+".join(str(value) for value in action.get("keys", [])),
+        }, supported
+    return {"kind": "unknown"}, False
+
+
 def _canonical_candidate(action: dict[str, Any]) -> str:
     return json.dumps(action, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -48,6 +82,8 @@ def build_candidate_record(
                 "action": action,
                 "action_score": float(scored["score"]),
                 "type_correct": bool(scored["type_correct"]),
+                "dynamics_action": policy_action_to_dynamics(action)[0],
+                "dynamics_action_supported": policy_action_to_dynamics(action)[1],
             }
         )
         if len(candidates) == maximum_candidates:
@@ -61,6 +97,8 @@ def build_candidate_record(
             "action": record["action"],
             "action_score": 1.0,
             "type_correct": True,
+            "dynamics_action": policy_action_to_dynamics(record["action"])[0],
+            "dynamics_action_supported": policy_action_to_dynamics(record["action"])[1],
         }
         if len(candidates) >= maximum_candidates:
             candidates[-1] = oracle

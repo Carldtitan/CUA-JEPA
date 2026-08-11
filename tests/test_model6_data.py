@@ -1,6 +1,7 @@
 from cua_jepa.model6_data import (
     build_candidate_record,
     candidate_generation_metrics,
+    policy_action_to_dynamics,
     split_scorer_training_records,
 )
 
@@ -35,6 +36,19 @@ def test_model6_candidate_builder_deduplicates_and_labels_actions() -> None:
     assert result["duplicate_candidates"] == 1
     assert result["parse_failures"] == 1
     assert result["candidates"][0]["action_score"] == 1.0
+
+
+def test_model6_policy_action_conversion_marks_trained_action_kinds() -> None:
+    click, click_supported = policy_action_to_dynamics(
+        {"action": "click", "x": 0.25, "y": 0.75}
+    )
+    hotkey, hotkey_supported = policy_action_to_dynamics(
+        {"action": "hotkey", "keys": ["ctrl", "s"]}
+    )
+    assert click == {"kind": "click", "x_normalized": 0.25, "y_normalized": 0.75}
+    assert click_supported is True
+    assert hotkey == {"kind": "press", "text": "ctrl+s"}
+    assert hotkey_supported is False
 
 
 def test_model6_training_oracle_replaces_a_bad_candidate() -> None:

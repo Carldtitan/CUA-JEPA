@@ -1465,3 +1465,11 @@ The following work is not complete:
 - **Simple explanation:** The command stopped before it started the GPU because Windows could not print one character.
 - **Correction:** Set `PYTHONUTF8=1` for Model 6 Modal commands.
 - **Status:** Corrected before the first Model 6 GPU smoke test. No GPU cost was used by the failed command.
+
+### 169. Model 6 dynamics and AgentNet use different action spaces
+
+- **Technical term:** Action-space mismatch.
+- **Mistake:** The first Model 6 plan did not state that the synthetic dynamics data contains only click, type, and scroll actions. AgentNet also contains double clicks, right clicks, pointer moves, key presses, and hotkeys.
+- **Simple explanation:** The world model has not seen every action that Qwen can propose.
+- **Correction:** Convert related pointer actions to the click representation. Mark each candidate as supported or unsupported. Report results for all examples and for the trained-action subset.
+- **Status:** Corrected in the Model 6 candidate schema before candidate generation.
