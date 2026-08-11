@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections import defaultdict
 from typing import Any, Iterable
 
@@ -13,29 +14,43 @@ from cua_jepa.sft_eval import parse_action_prediction, score_action
 SUPPORTED_DYNAMICS_ACTIONS = {"click", "write", "scroll"}
 
 
+def _safe_number(value: Any) -> tuple[float, bool]:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0.0, False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0, False
+    return (number, True) if math.isfinite(number) else (0.0, False)
+
+
 def policy_action_to_dynamics(action: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """Convert a Qwen policy action to the smaller synthetic dynamics action space."""
 
     kind = str(action.get("action", ""))
     supported = kind in SUPPORTED_DYNAMICS_ACTIONS
     if kind in {"click", "double_click", "right_click", "moveTo", "dragTo"}:
+        x, valid_x = _safe_number(action.get("x", 0.0))
+        y, valid_y = _safe_number(action.get("y", 0.0))
         return {
             "kind": "click",
-            "x_normalized": float(action.get("x", 0.0) or 0.0),
-            "y_normalized": float(action.get("y", 0.0) or 0.0),
-        }, supported
+            "x_normalized": x,
+            "y_normalized": y,
+        }, supported and valid_x and valid_y
     if kind == "write":
+        text = action.get("text", "")
         return {
             "kind": "type",
-            "text": str(action.get("text", "")),
+            "text": text if isinstance(text, str) else "",
             "x_normalized": 0.0,
             "y_normalized": 0.0,
-        }, supported
+        }, supported and isinstance(text, str)
     if kind == "scroll":
+        amount, valid_amount = _safe_number(action.get("amount", 0.0))
         return {
             "kind": "scroll",
-            "delta_y": float(action.get("amount", 0.0) or 0.0),
-        }, supported
+            "delta_y": amount,
+        }, supported and valid_amount
     if kind in {"press", "hotkey"}:
         return {
             "kind": "press",

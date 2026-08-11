@@ -1489,3 +1489,11 @@ The following work is not complete:
 - **Simple explanation:** Qwen sometimes gave the same answer more than once. The reranker then had too few choices.
 - **Correction:** Generate seven sampled actions in one batch. Remove duplicates and keep the first four unique actions. Continue to report the final candidate count and duplicate count.
 - **Status:** Corrected before full candidate generation. A second smoke test is required.
+
+### 172. A malformed Qwen coordinate stopped candidate generation
+
+- **Technical term:** Unvalidated model output schema.
+- **Mistake:** The action parser accepted a click whose `x` value was a list. The dynamics converter called `float()` on the list and stopped the run.
+- **Simple explanation:** Qwen produced the wrong data type. The code trusted it.
+- **Correction:** Validate every numeric action field. Replace an invalid value with zero, mark that candidate as unsupported, and continue. Add tests for malformed click and scroll values.
+- **Status:** Corrected after 50 of 2,250 examples. The failed run used about $0.10 and the full run must restart.

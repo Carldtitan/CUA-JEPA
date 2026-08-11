@@ -51,6 +51,19 @@ def test_model6_policy_action_conversion_marks_trained_action_kinds() -> None:
     assert hotkey_supported is False
 
 
+def test_model6_policy_action_conversion_rejects_malformed_numbers() -> None:
+    click, click_supported = policy_action_to_dynamics(
+        {"action": "click", "x": [0.25], "y": 0.75}
+    )
+    scroll, scroll_supported = policy_action_to_dynamics(
+        {"action": "scroll", "amount": {"pixels": -5}}
+    )
+    assert click == {"kind": "click", "x_normalized": 0.0, "y_normalized": 0.75}
+    assert click_supported is False
+    assert scroll == {"kind": "scroll", "delta_y": 0.0}
+    assert scroll_supported is False
+
+
 def test_model6_training_oracle_replaces_a_bad_candidate() -> None:
     wrong = '{"action":"scroll","amount":-5}'
     result = build_candidate_record(
