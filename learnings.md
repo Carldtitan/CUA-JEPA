@@ -1352,7 +1352,7 @@ The following work is not complete:
 - **Mistake:** Model 3 gave all four branches the same `NO_ACTION` input but kept the action-separation loss.
 - **Simple explanation:** The loss asked one identical input to select four different future screens. The model could not solve this task.
 - **Correction:** Set the Model 3 action-separation weight to zero. Keep latent JEPA regression, the same four future screens, the same Qwen visual LoRA, and the same training order. Keep action separation only in action-conditioned Model 4.
-- **Status:** Corrected in code after the first full attempt stopped with a non-finite gradient. A clean Model 3 restart is pending.
+- **Status:** Corrected and verified. The clean Model 3 JEPA run completed all 7,667 steps with zero non-finite gradients. Its artifact check passed.
 
 ### 155. The Model 3 SFT audit still described the removed loss
 
@@ -1425,3 +1425,19 @@ The following work is not complete:
 - **Simple explanation:** The command ended before it could confirm the large download.
 - **Correction:** Check the required final adapter files and audit files after a timeout. Use longer transfers or download only the required files first. Keep Modal as the complete remote copy.
 - **Status:** Contained. The required Model 2 and Model 4 final LoRAs, metrics, predictions, and audit files are present under `artifacts/`. The complete remote folders remain in the Modal volume.
+
+### 164. Action-conditioned JEPA did not improve the final policy
+
+- **Technical term:** Action-conditioning transfer failure.
+- **Mistake:** We expected the action-conditioned JEPA adapter in Model 4 to give the policy an advantage over the no-action JEPA adapter in Model 3.
+- **Simple explanation:** Model 4 learned some action-to-future matching, but Qwen did not use that knowledge to choose better actions after SFT.
+- **Correction:** Report the negative result. Do not claim that action-conditioned JEPA helped this policy. A later architecture must connect JEPA features to the policy without replacing or damaging Qwen's useful visual features.
+- **Status:** Confirmed by the matched final test. Model 3 scored 18.8%. Model 4 scored 18.4%. Their paired confidence interval includes zero, so the difference is not reliable.
+
+### 165. The JEPA objective damaged useful Qwen visual features
+
+- **Technical term:** Catastrophic interference in adapter transfer.
+- **Mistake:** The JEPA stage directly changed the same Qwen visual LoRA that the action policy later used.
+- **Simple explanation:** The adapter became better for the JEPA training goal, but worse for finding the correct GUI action.
+- **Correction:** Preserve the original Qwen visual path in the next design. Add JEPA as a separate feature branch with a gate, residual connection, or small fusion layer. Compare that design with the untouched Qwen path.
+- **Status:** Confirmed. Before SFT, Model 2 scored 40.8%, Model 3 scored 14.8%, and Model 4 scored 13.6%. After matched SFT, Model 2 still scored 51.2%, while Models 3 and 4 stayed below 19%.
