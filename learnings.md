@@ -1497,3 +1497,11 @@ The following work is not complete:
 - **Simple explanation:** Qwen produced the wrong data type. The code trusted it.
 - **Correction:** Validate every numeric action field. Replace an invalid value with zero, mark that candidate as unsupported, and continue. Add tests for malformed click and scroll values.
 - **Status:** Corrected after 50 of 2,250 examples. The failed run used about $0.10 and the full run must restart.
+
+### 173. The first full candidate run could not resume after a local Wi-Fi failure
+
+- **Technical term:** Non-resumable remote job orchestration.
+- **Mistake:** The Modal worker saved data every 100 examples, but the command had no way to continue from that saved prefix. A local DNS failure canceled the remote input after 175 examples.
+- **Simple explanation:** The backup existed, but the program did not know how to continue from it.
+- **Correction:** Add a resume run ID. Verify that saved examples are the exact unique start of the source data. Verify the seed, dataset hash, and timing count. Continue at the next example.
+- **Status:** Corrected. The saved run contains 100 committed examples and will resume at example 101.

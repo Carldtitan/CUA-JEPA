@@ -213,3 +213,18 @@ def candidate_generation_metrics(records: Iterable[dict[str, Any]]) -> dict[str,
         "duplicates": sum(int(record["duplicate_candidates"]) for record in values),
         "oracle_injections": sum(bool(record["oracle_injected"]) for record in values),
     }
+
+
+def validate_candidate_resume_prefix(
+    source_records: list[dict[str, Any]],
+    completed_records: list[dict[str, Any]],
+) -> int:
+    """Verify that saved candidate records are an exact source-data prefix."""
+
+    if len(completed_records) > len(source_records):
+        raise ValueError("Saved Model 6 candidates exceed the source data")
+    expected = [record["example_id"] for record in source_records[: len(completed_records)]]
+    actual = [record["example_id"] for record in completed_records]
+    if actual != expected or len(actual) != len(set(actual)):
+        raise ValueError("Saved Model 6 candidates are not an exact unique prefix")
+    return len(completed_records)

@@ -3,6 +3,7 @@ from cua_jepa.model6_data import (
     candidate_generation_metrics,
     policy_action_to_dynamics,
     split_scorer_training_records,
+    validate_candidate_resume_prefix,
 )
 
 
@@ -124,3 +125,15 @@ def test_model6_candidate_metrics_report_the_reranking_ceiling() -> None:
     metrics = candidate_generation_metrics([first, second])
     assert metrics["greedy_exact_success"] == 0.5
     assert metrics["candidate_recall_at_4"] == 1.0
+
+
+def test_model6_candidate_resume_requires_an_exact_prefix() -> None:
+    source = [_record(index) for index in range(3)]
+    completed = [{"example_id": "example-0"}, {"example_id": "example-1"}]
+    assert validate_candidate_resume_prefix(source, completed) == 2
+    try:
+        validate_candidate_resume_prefix(source, list(reversed(completed)))
+    except ValueError as error:
+        assert "exact unique prefix" in str(error)
+    else:
+        raise AssertionError("A reordered candidate prefix must be rejected")

@@ -212,6 +212,7 @@ def generate_model6_candidates(
     seed: int,
     git_commit: str,
     cost_limit_usd: float,
+    resume_run_id: str = "",
 ) -> dict:
     import time
 
@@ -219,7 +220,11 @@ def generate_model6_candidates(
     from PIL import Image
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-    from cua_jepa.model6_data import build_candidate_record, candidate_generation_metrics
+    from cua_jepa.model6_data import (
+        build_candidate_record,
+        candidate_generation_metrics,
+        validate_candidate_resume_prefix,
+    )
     from cua_jepa.observability import estimated_modal_cost, utc_now
     from cua_jepa.train_sft import SFTTrainConfig, _load_dataset, make_generation_inputs
 
@@ -255,37 +260,73 @@ def generate_model6_candidates(
         raise RuntimeError("Raw Qwen is not completely frozen")
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"model6-{mode}-raw-qwen-seed{seed}-{timestamp}"
+    run_id = resume_run_id or f"model6-{mode}-raw-qwen-seed{seed}-{timestamp}"
     output_dir = Path("/training") / run_id
-    output_dir.mkdir(parents=True, exist_ok=False)
     candidate_path = output_dir / "candidates.jsonl"
     timing_path = output_dir / "generation_timing.jsonl"
-    (output_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "model_variant": "model6",
-                "qwen_policy": "raw_base",
-                "qwen_model_id": config.model_id,
-                "qwen_model_revision": config.model_revision,
-                "seed": seed,
-                "mode": mode,
-                "maximum_candidates": 4,
-                "sample_count": 7,
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "git_commit": git_commit,
-                "dataset_sha256": dataset_audit["dataset_sha256"],
-            },
-            indent=2,
+    if resume_run_id:
+        if mode != "candidates" or not candidate_path.is_file():
+            raise RuntimeError("Model 6 can resume only a saved full candidate run")
+        saved_config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+        if (
+            int(saved_config["seed"]) != seed
+            or saved_config["dataset_sha256"] != dataset_audit["dataset_sha256"]
+        ):
+            raise RuntimeError("Model 6 resume configuration does not match this run")
+        outputs = [
+            json.loads(line)
+            for line in candidate_path.read_text(encoding="utf-8").splitlines()
+        ]
+        completed = validate_candidate_resume_prefix(records, outputs)
+        saved_timings = [
+            json.loads(line)
+            for line in timing_path.read_text(encoding="utf-8").splitlines()
+        ]
+        if len(saved_timings) != completed:
+            raise RuntimeError("Model 6 resume timing count does not match candidate count")
+        total_greedy_seconds = sum(value["greedy_seconds"] for value in saved_timings)
+        total_sample_seconds = sum(value["sample_batch_seconds"] for value in saved_timings)
+        with (output_dir / "resume_events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "resumed_at_utc": utc_now(),
+                        "completed_examples": completed,
+                        "git_commit": git_commit,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    else:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        (output_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_variant": "model6",
+                    "qwen_policy": "raw_base",
+                    "qwen_model_id": config.model_id,
+                    "qwen_model_revision": config.model_revision,
+                    "seed": seed,
+                    "mode": mode,
+                    "maximum_candidates": 4,
+                    "sample_count": 7,
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "git_commit": git_commit,
+                    "dataset_sha256": dataset_audit["dataset_sha256"],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
+        outputs = []
+        completed = 0
+        total_greedy_seconds = 0.0
+        total_sample_seconds = 0.0
 
-    outputs = []
-    total_greedy_seconds = 0.0
-    total_sample_seconds = 0.0
-    for index, record in enumerate(records, start=1):
+    for index, record in enumerate(records[completed:], start=completed + 1):
         elapsed = time.perf_counter() - started
         cost = estimated_modal_cost(
             elapsed,
@@ -666,6 +707,7 @@ def main(
     cost_limit_usd: float = 20.0,
     dynamics_run_id: str = "",
     candidate_run_id: str = "",
+    resume_run_id: str = "",
 ) -> None:
     if mode in {"candidate_smoke", "candidates"}:
         result = generate_model6_candidates.remote(
@@ -673,6 +715,7 @@ def main(
             seed,
             _git_commit(),
             cost_limit_usd,
+            resume_run_id,
         )
     elif mode in {"scorer_smoke", "scorer"}:
         if not dynamics_run_id or not candidate_run_id:
