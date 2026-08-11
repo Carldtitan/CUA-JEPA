@@ -420,11 +420,233 @@ def generate_model6_candidates(
     return {**metrics, "modal_output_dir": str(output_dir)}
 
 
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4,
+    memory=24_576,
+    timeout=2 * 60 * 60,
+    scaledown_window=60,
+    volumes={
+        "/training": training_volume,
+        "/sft": sft_volume,
+        "/root/.cache/huggingface": hf_cache_volume,
+    },
+)
+def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
+    import time
+
+    import torch
+    from PIL import Image
+    from sentence_transformers import SentenceTransformer
+    from transformers import AutoModel, AutoVideoProcessor
+
+    from cua_jepa.observability import utc_now
+    from cua_jepa.train_sft import sha256_file
+    from cua_jepa.train_vjepa2 import encode_screen_batch
+
+    started = time.perf_counter()
+    candidate_path = Path("/training") / candidate_run_id / "candidates.jsonl"
+    if not candidate_path.is_file():
+        raise RuntimeError(f"Model 6 candidates are missing: {candidate_path}")
+    records = [json.loads(line) for line in candidate_path.read_text(encoding="utf-8").splitlines()]
+    if not records:
+        raise RuntimeError("Model 6 candidate data is empty")
+    cache_key = hashlib.sha256(
+        (
+            sha256_file(candidate_path)
+            + "|facebook/vjepa2-vitl-fpc64-256"
+            + "|b3c1679b7c34d3255ef3547f27c7b226aefab26f"
+            + "|sentence-transformers/all-MiniLM-L6-v2"
+            + "|c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
+        ).encode()
+    ).hexdigest()
+    cache_dir = Path("/training/model6-agentnet-feature-cache")
+    cache_path = cache_dir / f"{cache_key}.pt"
+    if cache_path.is_file():
+        cached = torch.load(cache_path, map_location="cpu", weights_only=False)
+        if len(cached.get("features", {})) != len(records):
+            raise RuntimeError("Model 6 AgentNet feature cache has the wrong size")
+        return {
+            "cache_hit": True,
+            "cache_key": cache_key,
+            "cache_path": str(cache_path),
+            "examples": len(records),
+        }
+
+    device = torch.device("cuda")
+    vjepa_revision = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
+    vjepa_processor = AutoVideoProcessor.from_pretrained(
+        "facebook/vjepa2-vitl-fpc64-256", revision=vjepa_revision
+    )
+    vjepa = AutoModel.from_pretrained(
+        "facebook/vjepa2-vitl-fpc64-256",
+        revision=vjepa_revision,
+        dtype=torch.bfloat16,
+    )
+    vjepa.requires_grad_(False).eval().to(device)
+    goal_revision = "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
+    goal_encoder = SentenceTransformer(
+        "sentence-transformers/all-MiniLM-L6-v2",
+        revision=goal_revision,
+        device="cuda",
+    )
+    goal_encoder.requires_grad_(False).eval()
+    if any(parameter.requires_grad for parameter in vjepa.parameters()) or any(
+        parameter.requires_grad for parameter in goal_encoder.parameters()
+    ):
+        raise RuntimeError("A Model 6 feature encoder is trainable")
+
+    features = {}
+    dataset_root = Path("/sft/agentnet-v1")
+    batch_size = 8
+    for offset in range(0, len(records), batch_size):
+        batch = records[offset : offset + batch_size]
+        images = []
+        for record in batch:
+            with Image.open(dataset_root / record["stored_image"]) as opened:
+                images.append(opened.convert("RGB"))
+        current = encode_screen_batch(images, vjepa_processor, vjepa, device)
+        goals = goal_encoder.encode(
+            [record["instruction"] for record in batch],
+            batch_size=len(batch),
+            convert_to_tensor=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).detach().to(device="cpu", dtype=torch.float16)
+        for index, record in enumerate(batch):
+            features[record["example_id"]] = {
+                "current": current[index],
+                "goal": goals[index],
+            }
+        if offset == 0 or offset + len(batch) == len(records) or offset % 200 == 0:
+            print(
+                json.dumps(
+                    {
+                        "event": "model6_feature_preparation",
+                        "completed": offset + len(batch),
+                        "total": len(records),
+                        "elapsed_seconds": time.perf_counter() - started,
+                    }
+                ),
+                flush=True,
+            )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(".incomplete")
+    torch.save(
+        {
+            "cache_key": cache_key,
+            "candidate_run_id": candidate_run_id,
+            "vjepa_revision": vjepa_revision,
+            "goal_model_id": "sentence-transformers/all-MiniLM-L6-v2",
+            "goal_model_revision": goal_revision,
+            "features": features,
+        },
+        temporary,
+    )
+    temporary.replace(cache_path)
+    training_volume.commit()
+    return {
+        "cache_hit": False,
+        "cache_key": cache_key,
+        "cache_path": str(cache_path),
+        "examples": len(records),
+        "elapsed_seconds": time.perf_counter() - started,
+        "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
+        "completed_at_utc": utc_now(),
+    }
+
+
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4,
+    memory=24_576,
+    timeout=3 * 60 * 60,
+    scaledown_window=60,
+    volumes={
+        "/training": training_volume,
+        "/root/.cache/huggingface": hf_cache_volume,
+    },
+)
+def run_model6_scorer(
+    mode: str,
+    seed: int,
+    dynamics_run_id: str,
+    candidate_run_id: str,
+    feature_cache_path: str,
+    git_commit: str,
+) -> dict:
+    import torch
+
+    from cua_jepa.model6_runtime import load_model6_dynamics
+    from cua_jepa.train_model6_scorer import Model6ScorerConfig, train_model6_scorers
+
+    if mode not in {"scorer_smoke", "scorer"}:
+        raise ValueError("Scorer mode must be 'scorer_smoke' or 'scorer'")
+    dynamics_path = (
+        Path("/training") / dynamics_run_id / "model6_dynamics_heads.pt"
+    )
+    candidate_path = Path("/training") / candidate_run_id / "candidates.jsonl"
+    for path in (dynamics_path, candidate_path, Path(feature_cache_path)):
+        if not path.is_file():
+            raise RuntimeError(f"Model 6 scorer input is missing: {path}")
+    candidates = [
+        json.loads(line) for line in candidate_path.read_text(encoding="utf-8").splitlines()
+    ]
+    train = [record for record in candidates if record["split"] == "train"]
+    validation = [record for record in candidates if record["split"] == "validation"]
+    cached = torch.load(feature_cache_path, map_location="cpu", weights_only=False)
+    features = cached["features"]
+    if set(features) != {record["example_id"] for record in candidates}:
+        raise RuntimeError("Model 6 scorer features do not match the candidates")
+    config = Model6ScorerConfig(seed=seed)
+    if mode == "scorer_smoke":
+        config.maximum_epochs = 2
+        config.early_stopping_patience = 1
+        config.development_examples = 1
+        config.log_every = 1
+        train = train[:2]
+        validation = validation[:2]
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"model6-{mode}-seed{seed}-{timestamp}"
+    output_dir = Path("/training") / run_id
+    device = torch.device("cuda")
+    dynamics = load_model6_dynamics(dynamics_path, device)
+    result = train_model6_scorers(
+        train,
+        validation,
+        features,
+        dynamics,
+        output_dir,
+        config,
+        device,
+        training_volume.commit,
+    )
+    result.update(
+        {
+            "run_id": run_id,
+            "modal_output_dir": str(output_dir),
+            "dynamics_run_id": dynamics_run_id,
+            "candidate_run_id": candidate_run_id,
+            "feature_cache_path": feature_cache_path,
+            "git_commit": git_commit,
+        }
+    )
+    (output_dir / "final_metrics.json").write_text(
+        json.dumps(result, indent=2) + "\n", encoding="utf-8"
+    )
+    training_volume.commit()
+    return result
+
+
 @app.local_entrypoint()
 def main(
     mode: str = "smoke",
     seed: int = 20260813,
     cost_limit_usd: float = 20.0,
+    dynamics_run_id: str = "",
+    candidate_run_id: str = "",
 ) -> None:
     if mode in {"candidate_smoke", "candidates"}:
         result = generate_model6_candidates.remote(
@@ -433,6 +655,19 @@ def main(
             _git_commit(),
             cost_limit_usd,
         )
+    elif mode in {"scorer_smoke", "scorer"}:
+        if not dynamics_run_id or not candidate_run_id:
+            raise ValueError("Scorer mode requires dynamics and candidate run IDs")
+        prepared = prepare_model6_agentnet_features.remote(candidate_run_id)
+        result = run_model6_scorer.remote(
+            mode,
+            seed,
+            dynamics_run_id,
+            candidate_run_id,
+            prepared["cache_path"],
+            _git_commit(),
+        )
+        result["feature_preparation"] = prepared
     else:
         result = run_model6_dynamics.remote(
             mode,
