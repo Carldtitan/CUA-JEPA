@@ -504,6 +504,22 @@ def audit_model6_candidates(candidate_run_id: str) -> dict:
 
 @app.function(
     image=image,
+    cpu=1,
+    memory=512,
+    timeout=5 * 60,
+    volumes={"/training": training_volume},
+)
+def audit_model6_result(run_id: str) -> dict:
+    if not run_id.startswith("model6-") or "/" in run_id or "\\" in run_id:
+        raise ValueError("Invalid Model 6 run ID")
+    metrics_path = Path("/training") / run_id / "final_metrics.json"
+    if not metrics_path.is_file():
+        raise RuntimeError(f"Model 6 metrics are missing: {metrics_path}")
+    return json.loads(metrics_path.read_text(encoding="utf-8"))
+
+
+@app.function(
+    image=image,
     gpu="L4",
     cpu=4,
     memory=24_576,
@@ -762,6 +778,10 @@ def main(
         if not candidate_run_id:
             raise ValueError("Candidate audit mode requires a candidate run ID")
         result = audit_model6_candidates.remote(candidate_run_id)
+    elif mode == "result_audit":
+        if not candidate_run_id:
+            raise ValueError("Result audit mode requires a run ID")
+        result = audit_model6_result.remote(candidate_run_id)
     elif mode in {"scorer_smoke", "scorer"}:
         if not dynamics_run_id or not candidate_run_id:
             raise ValueError("Scorer mode requires dynamics and candidate run IDs")
