@@ -1,6 +1,7 @@
 from cua_jepa.train_model6_scorer import (
     _latency_summary,
     binary_auc,
+    paired_task_bootstrap,
     summarize_qwen_greedy,
     summarize_selection,
 )
@@ -61,3 +62,33 @@ def test_model6_latency_summary_reports_milliseconds() -> None:
         "p50_ms": 2.0,
         "p95_ms": 3.0,
     }
+
+
+def test_model6_paired_bootstrap_resamples_complete_tasks() -> None:
+    records = []
+    outputs = []
+    for index in range(2):
+        example_id = f"example-{index}"
+        records.append(
+            {
+                "example_id": example_id,
+                "task_id": f"task-{index}",
+                "candidates": [{"source": "greedy", "action_score": 0.0}],
+            }
+        )
+        for system, score in (
+            ("model6_future", 1.0),
+            ("action_only", 0.0),
+            ("shuffled_future", 0.0),
+        ):
+            outputs.append(
+                {
+                    "example_id": example_id,
+                    "system_name": system,
+                    "selected_action_score": score,
+                }
+            )
+    result = paired_task_bootstrap(records, outputs, seed=3, draws=20)
+    comparison = result["comparisons"]["qwen_greedy"]
+    assert comparison["model6_minus_control_mean_action_score"] == 1.0
+    assert comparison["mean_action_score_ci95"] == [1.0, 1.0]

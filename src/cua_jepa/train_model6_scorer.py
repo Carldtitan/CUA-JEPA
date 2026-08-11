@@ -175,6 +175,107 @@ def _latency_summary(values: list[float]) -> dict[str, float | int]:
     }
 
 
+def paired_task_bootstrap(
+    records: list[dict[str, Any]],
+    outputs: list[dict[str, Any]],
+    seed: int,
+    draws: int = 5_000,
+) -> dict[str, Any]:
+    """Compare Model 6 with its controls by resampling complete tasks."""
+
+    if not records or draws <= 0:
+        raise ValueError("Paired task bootstrap requires records and positive draws")
+    by_system = {
+        system: {
+            value["example_id"]: value
+            for value in outputs
+            if value["system_name"] == system
+        }
+        for system in ("model6_future", "action_only", "shuffled_future")
+    }
+    qwen = {}
+    task_for_example = {}
+    for record in records:
+        greedy = next(
+            (item for item in record["candidates"] if item["source"] == "greedy"),
+            None,
+        )
+        qwen[record["example_id"]] = float(greedy["action_score"]) if greedy else 0.0
+        task_for_example[record["example_id"]] = str(record["task_id"])
+    expected = set(qwen)
+    if any(set(values) != expected for values in by_system.values()):
+        raise ValueError("Model 6 paired outputs do not match validation examples")
+
+    baselines = {
+        "qwen_greedy": qwen,
+        "action_only": {
+            key: float(value["selected_action_score"])
+            for key, value in by_system["action_only"].items()
+        },
+        "shuffled_future": {
+            key: float(value["selected_action_score"])
+            for key, value in by_system["shuffled_future"].items()
+        },
+    }
+    model6 = {
+        key: float(value["selected_action_score"])
+        for key, value in by_system["model6_future"].items()
+    }
+    tasks = sorted(set(task_for_example.values()))
+    rng = random.Random(seed)
+    comparisons = {}
+    for name, baseline in baselines.items():
+        task_deltas: dict[str, list[tuple[float, float]]] = {
+            task: [] for task in tasks
+        }
+        for example_id in sorted(expected):
+            score_delta = model6[example_id] - baseline[example_id]
+            exact_delta = float(model6[example_id] == 1.0) - float(
+                baseline[example_id] == 1.0
+            )
+            task_deltas[task_for_example[example_id]].append((score_delta, exact_delta))
+        samples: list[tuple[float, float]] = []
+        for _ in range(draws):
+            chosen = [tasks[rng.randrange(len(tasks))] for _ in tasks]
+            values = [delta for task in chosen for delta in task_deltas[task]]
+            samples.append(
+                (
+                    sum(value[0] for value in values) / len(values),
+                    sum(value[1] for value in values) / len(values),
+                )
+            )
+        score_samples = sorted(value[0] for value in samples)
+        exact_samples = sorted(value[1] for value in samples)
+        observed = [delta for values in task_deltas.values() for delta in values]
+        comparisons[name] = {
+            "model6_minus_control_mean_action_score": sum(
+                value[0] for value in observed
+            )
+            / len(observed),
+            "mean_action_score_ci95": [
+                score_samples[round((draws - 1) * 0.025)],
+                score_samples[round((draws - 1) * 0.975)],
+            ],
+            "probability_mean_action_score_above_zero": sum(
+                value > 0.0 for value in score_samples
+            )
+            / draws,
+            "model6_minus_control_exact_success": sum(value[1] for value in observed)
+            / len(observed),
+            "exact_success_ci95": [
+                exact_samples[round((draws - 1) * 0.025)],
+                exact_samples[round((draws - 1) * 0.975)],
+            ],
+        }
+    return {
+        "tasks": len(tasks),
+        "examples": len(records),
+        "draws": draws,
+        "seed": seed,
+        "comparisons": comparisons,
+    }
+
+
 def evaluate_model6_scorers(
     records: list[dict[str, Any]],
     features: dict[str, dict[str, torch.Tensor]],
@@ -383,6 +484,11 @@ def train_model6_scorers(
         device,
         measure_latency=True,
     )
+    bootstrap = paired_task_bootstrap(
+        validation_records,
+        predictions,
+        seed=config.seed,
+    )
     torch.save(
         {
             "config": asdict(config),
@@ -403,6 +509,7 @@ def train_model6_scorers(
         "best_development_future_score": best_future_score,
         "best_development_action_score": best_action_score,
         "final_validation": final_metrics,
+        "paired_task_bootstrap": bootstrap,
         "elapsed_seconds": time.perf_counter() - started,
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
         "completed_at_utc": utc_now(),
