@@ -9,6 +9,7 @@ from cua_jepa.train_vjepa2 import (
     balanced_training_epoch,
     bundle_bootstrap_ci95,
     encoded_feature_cache_key,
+    evaluate_encoded_bundles,
     fusion_gate_metrics,
     gui_image_video,
     letterbox_action_coordinates,
@@ -27,7 +28,8 @@ from cua_jepa.train_vjepa2 import (
     VJEPA2PilotConfig,
 )
 
-from cua_jepa.jepa_model import QwenVJEPAFusionPredictor
+from cua_jepa.jepa_model import ActionConditionedPredictor, ActionEncoder, QwenVJEPAFusionPredictor
+from cua_jepa.model6 import InverseDynamicsHead, ResidualLatentAdapter, make_ema_adapter
 
 
 def _bundle(bundle_id: str, app: str) -> EncodedBundle:
@@ -124,6 +126,35 @@ def test_balanced_training_epoch_oversamples_small_app_pool() -> None:
     assert len(selected) == 6
     assert sum(bundle.app == "jira" for bundle in selected) == 3
     assert sum(bundle.app == "slack" for bundle in selected) == 3
+
+
+def test_model6_evaluation_reports_forward_and_inverse_accuracy() -> None:
+    bundle = _bundle("bundle", "jira")
+    action_encoder = ActionEncoder(output_dim=8, byte_dim=4, text_dim=4)
+    predictor = ActionConditionedPredictor(
+        latent_dim=1024,
+        hidden_dim=8,
+        action_dim=8,
+        layers=1,
+        heads=2,
+    )
+    online = ResidualLatentAdapter(latent_dim=1024, adapter_dim=8)
+    target = make_ema_adapter(online)
+    inverse = InverseDynamicsHead(latent_dim=1024, hidden_dim=8, action_dim=8)
+    metrics = evaluate_encoded_bundles(
+        [bundle],
+        action_encoder,
+        predictor,
+        torch.device("cpu"),
+        max_bundles=1,
+        seed=7,
+        online_adapter=online,
+        target_adapter=target,
+        inverse_head=inverse,
+    )
+    assert metrics["four_way_accuracy"] == 0.25
+    assert metrics["inverse_four_way_accuracy"] == 0.25
+    assert len(metrics["inverse_bundle_bootstrap_ci95"]) == 2
 
 
 def test_bundle_bootstrap_is_deterministic_and_bounded() -> None:

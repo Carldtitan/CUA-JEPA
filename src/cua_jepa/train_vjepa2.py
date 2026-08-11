@@ -39,6 +39,13 @@ from cua_jepa.jepa_model import (
     latent_prediction_loss,
     reconstruct_future_latent,
 )
+from cua_jepa.model6 import (
+    InverseDynamicsHead,
+    ResidualLatentAdapter,
+    inverse_dynamics_loss,
+    make_ema_adapter,
+    update_ema_adapter,
+)
 from cua_jepa.observability import (
     append_jsonl,
     changed_pixel_bucket,
@@ -58,6 +65,7 @@ from cua_jepa.observability import (
 
 @dataclass
 class VJEPA2PilotConfig:
+    architecture_name: str = "vjepa2_gui"
     model_id: str = "facebook/vjepa2-vitl-fpc64-256"
     model_revision: str = "b3c1679b7c34d3255ef3547f27c7b226aefab26f"
     seed: int = 20260811
@@ -107,6 +115,11 @@ class VJEPA2PilotConfig:
     qwen_feature_cache_version: int = 1
     dataset_split_strategy: str = "app_disjoint"
     dataset_split_seed: int = 20260811
+    model6_adapter_dim: int = 256
+    model6_inverse_hidden_dim: int = 384
+    model6_inverse_loss_weight: float = 0.25
+    model6_inverse_temperature: float = 0.1
+    model6_ema_decay: float = 0.996
 
 
 def fusion_gate_metrics(predictor: torch.nn.Module) -> dict[str, Any]:
@@ -358,6 +371,25 @@ def _predict_bundle_deltas(
         return predictor(current, embeddings, spatial)
     positions = bundle.screen_positions.to(device=device, dtype=torch.float32)
     return predictor(current, embeddings, spatial, positions)
+
+
+def model6_latent_views(
+    current: torch.Tensor,
+    targets: torch.Tensor,
+    online_adapter: ResidualLatentAdapter | None,
+    target_adapter: ResidualLatentAdapter | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build online current, target current, and target future representations."""
+
+    if online_adapter is None and target_adapter is None:
+        return current, current, targets
+    if online_adapter is None or target_adapter is None:
+        raise ValueError("Model 6 requires both online and target latent adapters")
+    online_current = online_adapter(current)
+    with torch.no_grad():
+        target_current = target_adapter(current)
+        target_futures = target_adapter(targets)
+    return online_current, target_current, target_futures
 
 
 def action_prediction_targets(
@@ -752,11 +784,22 @@ def evaluate_encoded_bundles(
     max_bundles: int,
     seed: int,
     prediction_target_mode: str = "future_delta",
+    online_adapter: ResidualLatentAdapter | None = None,
+    target_adapter: ResidualLatentAdapter | None = None,
+    inverse_head: InverseDynamicsHead | None = None,
+    inverse_temperature: float = 0.1,
 ) -> dict[str, Any]:
     selected = select_balanced_encoded_bundles(bundles, max_bundles)
     action_encoder.eval()
     predictor.eval()
+    if online_adapter is not None:
+        online_adapter.eval()
+    if target_adapter is not None:
+        target_adapter.eval()
+    if inverse_head is not None:
+        inverse_head.eval()
     correct = 0
+    inverse_correct = 0
     shuffled_correct = 0
     shuffled_current_correct = 0
     correct_distances: list[float] = []
@@ -769,6 +812,7 @@ def evaluate_encoded_bundles(
     action_results: dict[str, dict[str, float]] = {}
     changed_results: dict[str, dict[str, float]] = {}
     bundle_accuracies: list[float] = []
+    inverse_bundle_accuracies: list[float] = []
     records: list[dict[str, Any]] = []
     grid = torch.tensor([1, 32, 32])
     with torch.inference_mode():
@@ -776,13 +820,24 @@ def evaluate_encoded_bundles(
             current = bundle.current.to(device=device, dtype=torch.float32)
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
+            online_current, target_current, target_futures = model6_latent_views(
+                current,
+                targets,
+                online_adapter,
+                target_adapter,
+            )
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
             spatial = _bundle_spatial_features(bundle, grid, device)
             predicted_deltas = _predict_bundle_deltas(
-                predictor, current, embeddings, spatial, bundle, device
+                predictor, online_current, embeddings, spatial, bundle, device
             )
-            shuffled_current = selected[(bundle_index + 1) % len(selected)].current.to(
+            shuffled_current_raw = selected[(bundle_index + 1) % len(selected)].current.to(
                 device=device, dtype=torch.float32
+            )
+            shuffled_current = (
+                online_adapter(shuffled_current_raw)
+                if online_adapter is not None
+                else shuffled_current_raw
             )
             shuffled_current_deltas = _predict_bundle_deltas(
                 predictor,
@@ -794,17 +849,31 @@ def evaluate_encoded_bundles(
                 getattr(selected[(bundle_index + 1) % len(selected)], "semantic_current", None),
             )
             predictions, comparison_targets = prediction_space(
-                current,
-                targets,
+                target_current,
+                target_futures,
                 predicted_deltas,
                 prediction_target_mode,
             )
             shuffled_current_predictions, _ = prediction_space(
-                current,
-                targets,
+                target_current,
+                target_futures,
                 shuffled_current_deltas,
                 prediction_target_mode,
             )
+            if inverse_head is not None:
+                inverse_logits = inverse_head(
+                    online_current,
+                    target_futures,
+                    embeddings,
+                    inverse_temperature,
+                )
+                inverse_bundle_correct = int(
+                    (inverse_logits.argmax(dim=1) == torch.arange(4, device=device))
+                    .sum()
+                    .item()
+                )
+                inverse_correct += inverse_bundle_correct
+                inverse_bundle_accuracies.append(inverse_bundle_correct / 4)
             effective_weights = prediction_target_weights(weights, prediction_target_mode)
             shared_weights = effective_weights.max(dim=0).values
             normalized_targets = torch.nn.functional.normalize(
@@ -909,10 +978,20 @@ def evaluate_encoded_bundles(
     prediction_pair_mean = sum(prediction_pair_distances) / len(prediction_pair_distances)
     action_encoder.train()
     predictor.train()
+    if online_adapter is not None:
+        online_adapter.train()
+    if inverse_head is not None:
+        inverse_head.train()
     return {
         "bundles": len(selected),
         "prediction_target_mode": prediction_target_mode,
         "four_way_accuracy": accuracy,
+        "inverse_four_way_accuracy": inverse_correct / count if inverse_head else None,
+        "inverse_bundle_bootstrap_ci95": bundle_bootstrap_ci95(
+            inverse_bundle_accuracies, seed + 100_000
+        )
+        if inverse_bundle_accuracies
+        else None,
         "bundle_bootstrap_ci95": bundle_bootstrap_ci95(bundle_accuracies, seed),
         "shuffled_four_way_accuracy": shuffled_accuracy,
         "action_accuracy_drop": accuracy - shuffled_accuracy,
@@ -957,6 +1036,11 @@ def pilot_success(metrics: dict[str, Any]) -> tuple[bool, dict[str, bool]]:
 
 def validate_vjepa2_pilot_artifacts(output_dir: str | Path) -> dict[str, Any]:
     root = Path(output_dir)
+    if not (root / "config.json").is_file():
+        raise ValueError("V-JEPA 2 pilot artifacts are missing: ['config.json']")
+    config = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    model6 = config.get("architecture_name") == "model6"
+    weights_name = "model6_dynamics_heads.pt" if model6 else "vjepa2_gui_heads.pt"
     required = {
         "config.json",
         "dataset_audit.json",
@@ -965,7 +1049,7 @@ def validate_vjepa2_pilot_artifacts(output_dir: str | Path) -> dict[str, Any]:
         "evaluation_checkpoints.jsonl",
         "evaluation_bundles.jsonl",
         "final_metrics.json",
-        "vjepa2_gui_heads.pt",
+        weights_name,
     }
     missing = sorted(name for name in required if not (root / name).is_file())
     if missing:
@@ -974,9 +1058,14 @@ def validate_vjepa2_pilot_artifacts(output_dir: str | Path) -> dict[str, Any]:
     json.dumps(metrics, allow_nan=False)
     if metrics["steps"] <= 0:
         raise ValueError("V-JEPA 2 pilot saved no completed training steps")
-    weights = torch.load(root / "vjepa2_gui_heads.pt", map_location="cpu", weights_only=False)
+    weights = torch.load(root / weights_name, map_location="cpu", weights_only=False)
     if not weights.get("action_encoder") or not weights.get("predictor"):
         raise ValueError("V-JEPA 2 pilot head weights are empty")
+    if model6 and not all(
+        weights.get(name)
+        for name in ("online_adapter", "target_adapter", "inverse_head")
+    ):
+        raise ValueError("Model 6 dynamics weights are incomplete")
     evaluation_rows = [
         json.loads(line)
         for line in (root / "evaluation_checkpoints.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1013,6 +1102,8 @@ def train_vjepa2_gui_pilot(
         raise RuntimeError(f"V-JEPA 2 output directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "config.json", asdict(config))
+    if config.architecture_name not in {"vjepa2_gui", "model6"}:
+        raise ValueError(f"Unknown architecture name: {config.architecture_name}")
     if config.max_train_transitions % 4 or config.max_validation_transitions % 4:
         raise ValueError("Transition limits must contain complete four-branch bundles")
     if config.dataset_split_strategy not in {"app_disjoint", "same_app_holdout"}:
@@ -1227,7 +1318,23 @@ def train_vjepa2_gui_pilot(
         layers=config.predictor_layers,
         heads=config.predictor_heads,
     ).to(device)
+    online_adapter: ResidualLatentAdapter | None = None
+    target_adapter: ResidualLatentAdapter | None = None
+    inverse_head: InverseDynamicsHead | None = None
+    if config.architecture_name == "model6":
+        online_adapter = ResidualLatentAdapter(
+            latent_dim=1024,
+            adapter_dim=config.model6_adapter_dim,
+        ).to(device)
+        target_adapter = make_ema_adapter(online_adapter).to(device)
+        inverse_head = InverseDynamicsHead(
+            latent_dim=1024,
+            hidden_dim=config.model6_inverse_hidden_dim,
+            action_dim=config.predictor_dim,
+        ).to(device)
     trainable = list(action_encoder.parameters()) + list(predictor.parameters())
+    if online_adapter is not None and inverse_head is not None:
+        trainable += list(online_adapter.parameters()) + list(inverse_head.parameters())
     optimizer = torch.optim.AdamW(
         trainable, lr=config.learning_rate, weight_decay=config.weight_decay
     )
@@ -1235,6 +1342,14 @@ def train_vjepa2_gui_pilot(
         "action_encoder": named_tensors_sha256(action_encoder.state_dict().items()),
         "predictor": named_tensors_sha256(predictor.state_dict().items()),
     }
+    if online_adapter is not None and target_adapter is not None and inverse_head is not None:
+        initial_hashes.update(
+            {
+                "online_adapter": named_tensors_sha256(online_adapter.state_dict().items()),
+                "target_adapter": named_tensors_sha256(target_adapter.state_dict().items()),
+                "inverse_head": named_tensors_sha256(inverse_head.state_dict().items()),
+            }
+        )
     write_json(
         output / "initialization_audit.json",
         {
@@ -1243,6 +1358,17 @@ def train_vjepa2_gui_pilot(
                 parameter.numel() for parameter in action_encoder.parameters()
             ),
             "predictor_parameters": sum(parameter.numel() for parameter in predictor.parameters()),
+            "architecture_name": config.architecture_name,
+            "online_adapter_parameters": sum(
+                parameter.numel() for parameter in online_adapter.parameters()
+            )
+            if online_adapter is not None
+            else 0,
+            "inverse_head_parameters": sum(
+                parameter.numel() for parameter in inverse_head.parameters()
+            )
+            if inverse_head is not None
+            else 0,
             "initial_hashes": initial_hashes,
         },
     )
@@ -1258,6 +1384,10 @@ def train_vjepa2_gui_pilot(
             maximum,
             config.seed + step,
             config.prediction_target_mode,
+            online_adapter,
+            target_adapter,
+            inverse_head,
+            config.model6_inverse_temperature,
         )
         records = result.pop("per_bundle_records")
         row = {"recorded_at_utc": utc_now(), "step": step, "evaluation": name, **result}
@@ -1301,13 +1431,19 @@ def train_vjepa2_gui_pilot(
             current = bundle.current.to(device=device, dtype=torch.float32)
             targets = bundle.targets.to(device=device, dtype=torch.float32)
             weights = bundle.target_weights.to(device=device, dtype=torch.float32)
+            online_current, target_current, target_futures = model6_latent_views(
+                current,
+                targets,
+                online_adapter,
+                target_adapter,
+            )
             embeddings = _action_embedding(action_encoder, bundle.actions, device)
             spatial = _bundle_spatial_features(bundle, grid, device)
             predicted_deltas = _predict_bundle_deltas(
-                predictor, current, embeddings, spatial, bundle, device
+                predictor, online_current, embeddings, spatial, bundle, device
             )
             target_deltas = action_prediction_targets(
-                current, targets, config.prediction_target_mode
+                target_current, target_futures, config.prediction_target_mode
             )
             effective_weights = prediction_target_weights(
                 weights, config.prediction_target_mode
@@ -1333,8 +1469,8 @@ def train_vjepa2_gui_pilot(
                 predicted_deltas, target_deltas, effective_weights
             )
             predictions, comparison_targets = prediction_space(
-                current,
-                targets,
+                target_current,
+                target_futures,
                 predicted_deltas,
                 config.prediction_target_mode,
             )
@@ -1344,12 +1480,33 @@ def train_vjepa2_gui_pilot(
                 effective_weights,
                 temperature=config.action_separation_temperature,
             )
+            if inverse_head is not None:
+                inverse_logits = inverse_head(
+                    online_current,
+                    target_futures,
+                    embeddings,
+                    config.model6_inverse_temperature,
+                )
+                inverse_loss = inverse_dynamics_loss(inverse_logits)
+                inverse_accuracy = float(
+                    (
+                        inverse_logits.argmax(dim=1)
+                        == torch.arange(inverse_logits.shape[0], device=device)
+                    )
+                    .float()
+                    .mean()
+                    .item()
+                )
+            else:
+                inverse_loss = torch.zeros((), device=device)
+                inverse_accuracy = 0.0
             loss = (
                 regression_loss
                 + config.variance_regularization_weight * regularizers["variance"]
                 + config.covariance_regularization_weight * regularizers["covariance"]
                 + config.relation_regularization_weight * regularizers["relation"]
                 + config.action_separation_weight * separation_loss
+                + config.model6_inverse_loss_weight * inverse_loss
             )
             if not torch.isfinite(loss):
                 raise RuntimeError("V-JEPA 2 pilot produced a non-finite loss")
@@ -1362,6 +1519,12 @@ def train_vjepa2_gui_pilot(
                     f"V-JEPA 2 pilot produced {nonfinite_gradients} non-finite gradients"
                 )
             optimizer.step()
+            if online_adapter is not None and target_adapter is not None:
+                update_ema_adapter(
+                    target_adapter,
+                    online_adapter,
+                    config.model6_ema_decay,
+                )
             step += 1
             losses.append(float(loss.detach().item()))
             if step == 1 or step % config.log_every == 0:
@@ -1378,9 +1541,21 @@ def train_vjepa2_gui_pilot(
                     "changed_region_loss": float(changed_loss.detach().item()),
                     "global_loss": float(global_loss.detach().item()),
                     "action_separation_loss": float(separation_loss.detach().item()),
+                    "inverse_dynamics_loss": float(inverse_loss.detach().item()),
+                    "inverse_dynamics_accuracy": inverse_accuracy,
                     "gradient_norm_before_clip": gradient_norm,
                     "action_encoder_gradient_norm": gradient_l2_norm(action_encoder.parameters()),
                     "predictor_gradient_norm": gradient_l2_norm(predictor.parameters()),
+                    "online_adapter_gradient_norm": gradient_l2_norm(
+                        online_adapter.parameters()
+                    )
+                    if online_adapter is not None
+                    else None,
+                    "inverse_head_gradient_norm": gradient_l2_norm(
+                        inverse_head.parameters()
+                    )
+                    if inverse_head is not None
+                    else None,
                     "action_encoder_parameter_norm": parameter_l2_norm(action_encoder.parameters()),
                     "predictor_parameter_norm": parameter_l2_norm(predictor.parameters()),
                     "fusion_gate_gradient_norm": gradient_l2_norm(
@@ -1416,22 +1591,46 @@ def train_vjepa2_gui_pilot(
         config.validation_evaluation_bundles,
     )
     passed, checks = pilot_success(final_validation)
+    if config.architecture_name == "model6":
+        inverse_accuracy = float(final_validation.get("inverse_four_way_accuracy") or 0.0)
+        inverse_interval = final_validation.get("inverse_bundle_bootstrap_ci95") or [0.0, 0.0]
+        checks["inverse_accuracy_at_least_35_percent"] = inverse_accuracy >= 0.35
+        checks["inverse_ci_lower_bound_above_chance"] = inverse_interval[0] > 0.25
+        passed = all(checks.values())
     final_hashes = {
         "action_encoder": named_tensors_sha256(action_encoder.state_dict().items()),
         "predictor": named_tensors_sha256(predictor.state_dict().items()),
     }
+    if online_adapter is not None and target_adapter is not None and inverse_head is not None:
+        final_hashes.update(
+            {
+                "online_adapter": named_tensors_sha256(online_adapter.state_dict().items()),
+                "target_adapter": named_tensors_sha256(target_adapter.state_dict().items()),
+                "inverse_head": named_tensors_sha256(inverse_head.state_dict().items()),
+            }
+        )
     if final_hashes == initial_hashes:
         raise RuntimeError("V-JEPA 2 pilot head weights did not change")
-    torch.save(
-        {
-            "config": asdict(config),
-            "action_encoder": action_encoder.state_dict(),
-            "predictor": predictor.state_dict(),
-            "initial_hashes": initial_hashes,
-            "final_hashes": final_hashes,
-        },
-        output / "vjepa2_gui_heads.pt",
-    )
+    saved_weights = {
+        "config": asdict(config),
+        "action_encoder": action_encoder.state_dict(),
+        "predictor": predictor.state_dict(),
+        "initial_hashes": initial_hashes,
+        "final_hashes": final_hashes,
+    }
+    weights_name = "vjepa2_gui_heads.pt"
+    if config.architecture_name == "model6":
+        if online_adapter is None or target_adapter is None or inverse_head is None:
+            raise RuntimeError("Model 6 heads were not created")
+        weights_name = "model6_dynamics_heads.pt"
+        saved_weights.update(
+            {
+                "online_adapter": online_adapter.state_dict(),
+                "target_adapter": target_adapter.state_dict(),
+                "inverse_head": inverse_head.state_dict(),
+            }
+        )
+    torch.save(saved_weights, output / weights_name)
     elapsed = time.perf_counter() - started
     final_cost = estimated_modal_cost(
         elapsed,
@@ -1452,7 +1651,9 @@ def train_vjepa2_gui_pilot(
         "final_validation": final_validation,
         "success_gate_passed": passed,
         "success_gate_checks": checks,
+        "architecture_name": config.architecture_name,
         "encoder_frozen": True,
+        "target_adapter_frozen": target_adapter is not None,
         "trainable_parameters": sum(parameter.numel() for parameter in trainable),
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
         "feature_cache_hit": cache_hit,
