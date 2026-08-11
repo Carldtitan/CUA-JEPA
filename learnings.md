@@ -1505,3 +1505,11 @@ The following work is not complete:
 - **Simple explanation:** The backup existed, but the program did not know how to continue from it.
 - **Correction:** Add a resume run ID. Verify that saved examples are the exact unique start of the source data. Verify the seed, dataset hash, and timing count. Continue at the next example.
 - **Status:** Corrected. The saved run contains 100 committed examples and will resume at example 101.
+
+### 174. The long Modal command was not detached from the local computer
+
+- **Technical term:** Detached remote execution.
+- **Mistake:** The first long candidate command used the default Modal run mode. Modal canceled the remote input when the local Wi-Fi connection lost its heartbeat.
+- **Simple explanation:** The cloud job still depended on the laptop connection.
+- **Correction:** Use `modal run --detach` for long runs. Keep the saved-prefix resume system as a second safety control.
+- **Status:** Corrected before the resumed candidate run.
