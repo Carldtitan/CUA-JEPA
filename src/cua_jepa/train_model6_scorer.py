@@ -116,6 +116,65 @@ def summarize_selection(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def summarize_qwen_greedy(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the unchanged Qwen policy from the same candidate records."""
+
+    selected = []
+    for record in records:
+        greedy = next(
+            (item for item in record["candidates"] if item["source"] == "greedy"),
+            None,
+        )
+        score = float(greedy["action_score"]) if greedy is not None else 0.0
+        selected.append(
+            {
+                "score": score,
+                "oracle": max(
+                    (float(item["action_score"]) for item in record["candidates"]),
+                    default=0.0,
+                ),
+                "supported": policy_action_to_dynamics(record["target_action"])[1],
+            }
+        )
+
+    def summarize(values: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not values:
+            return None
+        count = len(values)
+        return {
+            "examples": count,
+            "exact_success_rate": sum(value["score"] == 1.0 for value in values) / count,
+            "mean_action_score": sum(value["score"] for value in values) / count,
+            "oracle_exact_recall": sum(value["oracle"] == 1.0 for value in values) / count,
+            "mean_regret": sum(value["oracle"] - value["score"] for value in values)
+            / count,
+        }
+
+    return {
+        **(summarize(selected) or {}),
+        "supported_action_subset": summarize(
+            [value for value in selected if value["supported"]]
+        ),
+    }
+
+
+def _latency_summary(values: list[float]) -> dict[str, float | int]:
+    ordered = sorted(values)
+    if not ordered:
+        return {"measurements": 0, "mean_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0}
+
+    def percentile(fraction: float) -> float:
+        index = round((len(ordered) - 1) * fraction)
+        return ordered[index] * 1000.0
+
+    return {
+        "measurements": len(ordered),
+        "mean_ms": sum(ordered) / len(ordered) * 1000.0,
+        "p50_ms": percentile(0.50),
+        "p95_ms": percentile(0.95),
+    }
+
+
 def evaluate_model6_scorers(
     records: list[dict[str, Any]],
     features: dict[str, dict[str, torch.Tensor]],
@@ -123,16 +182,22 @@ def evaluate_model6_scorers(
     future_scorer: GoalConditionedFutureScorer,
     action_scorer: ActionOnlyScorer,
     device: torch.device,
+    measure_latency: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     future_scorer.eval()
     action_scorer.eval()
     outputs: list[dict[str, Any]] = []
+    dynamics_latencies: list[float] = []
+    scorer_latencies: list[float] = []
     with torch.inference_mode():
         for record in records:
             if not record["candidates"]:
                 continue
             feature = features[record["example_id"]]
             actions = [value["dynamics_action"] for value in record["candidates"]]
+            if measure_latency and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            dynamics_started = time.perf_counter()
             futures, action_embeddings = predict_candidate_futures(
                 feature["current"],
                 actions,
@@ -141,10 +206,21 @@ def evaluate_model6_scorers(
                 dynamics,
                 device,
             )
+            if measure_latency and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            if measure_latency:
+                dynamics_latencies.append(time.perf_counter() - dynamics_started)
             goal = feature["goal"].to(device=device, dtype=torch.float32)
+            if measure_latency and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            scorer_started = time.perf_counter()
             future_logits = future_scorer(futures, goal)
             action_logits = action_scorer(action_embeddings, goal)
             shuffled_logits = future_scorer(futures.roll(1, dims=0), goal)
+            if measure_latency and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            if measure_latency:
+                scorer_latencies.append(time.perf_counter() - scorer_started)
             outputs.extend(
                 [
                     _selected_record(record, future_logits, "model6_future"),
@@ -158,6 +234,12 @@ def evaluate_model6_scorers(
         )
         for system in ("model6_future", "action_only", "shuffled_future")
     }
+    metrics["qwen_greedy"] = summarize_qwen_greedy(records)
+    if measure_latency:
+        metrics["runtime_latency"] = {
+            "batched_jepa_prediction": _latency_summary(dynamics_latencies),
+            "all_three_scorer_controls": _latency_summary(scorer_latencies),
+        }
     future_scorer.train()
     action_scorer.train()
     return metrics, outputs
@@ -299,6 +381,7 @@ def train_model6_scorers(
         future_scorer,
         action_scorer,
         device,
+        measure_latency=True,
     )
     torch.save(
         {

@@ -472,6 +472,7 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
             "cache_key": cache_key,
             "cache_path": str(cache_path),
             "examples": len(records),
+            "timing": cached.get("timing"),
         }
 
     device = torch.device("cuda")
@@ -500,13 +501,20 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
     features = {}
     dataset_root = Path("/sft/agentnet-v1")
     batch_size = 8
+    total_vjepa_seconds = 0.0
+    total_goal_seconds = 0.0
     for offset in range(0, len(records), batch_size):
         batch = records[offset : offset + batch_size]
         images = []
         for record in batch:
             with Image.open(dataset_root / record["stored_image"]) as opened:
                 images.append(opened.convert("RGB"))
+        torch.cuda.synchronize()
+        vjepa_started = time.perf_counter()
         current = encode_screen_batch(images, vjepa_processor, vjepa, device)
+        torch.cuda.synchronize()
+        total_vjepa_seconds += time.perf_counter() - vjepa_started
+        goal_started = time.perf_counter()
         goals = goal_encoder.encode(
             [record["instruction"] for record in batch],
             batch_size=len(batch),
@@ -514,6 +522,8 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
             normalize_embeddings=True,
             show_progress_bar=False,
         ).detach().to(device="cpu", dtype=torch.float16)
+        torch.cuda.synchronize()
+        total_goal_seconds += time.perf_counter() - goal_started
         for index, record in enumerate(batch):
             features[record["example_id"]] = {
                 "current": current[index],
@@ -533,6 +543,13 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
             )
     cache_dir.mkdir(parents=True, exist_ok=True)
     temporary = cache_path.with_suffix(".incomplete")
+    timing = {
+        "vjepa_total_seconds": total_vjepa_seconds,
+        "vjepa_mean_ms_per_screen": total_vjepa_seconds / len(records) * 1000.0,
+        "goal_encoder_total_seconds": total_goal_seconds,
+        "goal_encoder_mean_ms_per_task": total_goal_seconds / len(records) * 1000.0,
+        "batch_size": batch_size,
+    }
     torch.save(
         {
             "cache_key": cache_key,
@@ -540,6 +557,7 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
             "vjepa_revision": vjepa_revision,
             "goal_model_id": "sentence-transformers/all-MiniLM-L6-v2",
             "goal_model_revision": goal_revision,
+            "timing": timing,
             "features": features,
         },
         temporary,
@@ -551,6 +569,7 @@ def prepare_model6_agentnet_features(candidate_run_id: str) -> dict:
         "cache_key": cache_key,
         "cache_path": str(cache_path),
         "examples": len(records),
+        "timing": timing,
         "elapsed_seconds": time.perf_counter() - started,
         "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / 2**30,
         "completed_at_utc": utc_now(),
