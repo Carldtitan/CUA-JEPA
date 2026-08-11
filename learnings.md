@@ -1441,3 +1441,19 @@ The following work is not complete:
 - **Simple explanation:** The adapter became better for the JEPA training goal, but worse for finding the correct GUI action.
 - **Correction:** Preserve the original Qwen visual path in the next design. Add JEPA as a separate feature branch with a gate, residual connection, or small fusion layer. Compare that design with the untouched Qwen path.
 - **Status:** Confirmed. Before SFT, Model 2 scored 40.8%, Model 3 scored 14.8%, and Model 4 scored 13.6%. After matched SFT, Model 2 still scored 51.2%, while Models 3 and 4 stayed below 19%.
+
+### 166. Report titles overlapped some subplot titles
+
+- **Technical term:** Figure-layout collision.
+- **Mistake:** The first chart pack put the report title and some subplot titles in the same space.
+- **Simple explanation:** Some chart labels covered other chart labels.
+- **Correction:** Move the report title above the subplot titles. Visually inspect charts from each layout type before delivery.
+- **Status:** Corrected. The chart pack was regenerated after the layout check.
+
+### 167. One chart label had a character-encoding artifact
+
+- **Technical term:** Text-encoding artifact.
+- **Mistake:** A separator character in the JEPA pilot chart could display as invalid text in some terminals or chart builds.
+- **Simple explanation:** One label could show the wrong characters.
+- **Correction:** Use a plain ASCII hyphen in generated labels. Check the final images after regeneration.
+- **Status:** Corrected before delivery.
