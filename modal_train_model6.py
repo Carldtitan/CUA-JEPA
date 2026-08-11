@@ -270,7 +270,7 @@ def generate_model6_candidates(
                 "seed": seed,
                 "mode": mode,
                 "maximum_candidates": 4,
-                "sample_count": 3,
+                "sample_count": 7,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "git_commit": git_commit,
@@ -333,7 +333,7 @@ def generate_model6_candidates(
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,
-                num_return_sequences=3,
+                num_return_sequences=7,
                 use_cache=True,
             )
         torch.cuda.synchronize()

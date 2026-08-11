@@ -1481,3 +1481,11 @@ The following work is not complete:
 - **Simple explanation:** The scorer received a type of tensor that PyTorch does not permit during training.
 - **Correction:** Clone the predicted futures and action embeddings after inference mode ends. This makes normal detached tensors. Add tests that check both returned tensors.
 - **Status:** Corrected after the scorer smoke test. The full scorer run did not start.
+
+### 171. Three sampled actions did not reliably give four unique candidates
+
+- **Technical term:** Candidate-set diversity loss.
+- **Mistake:** Model 6 generated one greedy action and only three sampled actions. Duplicate actions left half of the smoke examples with fewer than four unique candidates.
+- **Simple explanation:** Qwen sometimes gave the same answer more than once. The reranker then had too few choices.
+- **Correction:** Generate seven sampled actions in one batch. Remove duplicates and keep the first four unique actions. Continue to report the final candidate count and duplicate count.
+- **Status:** Corrected before full candidate generation. A second smoke test is required.
