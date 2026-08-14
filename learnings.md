@@ -1537,3 +1537,11 @@ The following work is not complete:
 - **Simple explanation:** The main project page showed an old project state.
 - **Correction:** Link the completed SFT report. Add Model 6 as the latest experiment and state its negative result directly.
 - **Status:** Corrected with the final Model 6 report.
+
+### 178. Model 3 and Model 4 did not use the same final JEPA loss
+
+- **Technical term:** Causal-control objective mismatch.
+- **Mistake:** Model 4 used an InfoNCE action-separation loss with weight `0.25`. Model 3 used weight `0.0` because all four branches had the same `NO_ACTION` input. Therefore, the final Model 4 versus Model 3 comparison changed both the action information and the training objective.
+- **Simple explanation:** Model 4 received correct actions and an extra loss. Model 3 received neither. The comparison does not isolate only the effect of correct actions.
+- **Correction:** Report this comparison as a useful control with a known limit. Do not call it a perfect causal test. A future experiment must include a matched pure-regression pair. A separate shuffled-action control can test InfoNCE with the same loss but incorrect action-to-future pairs.
+- **Status:** Newly documented. The completed runs are unchanged. This control needs a new matched experiment before a strong causal claim.
